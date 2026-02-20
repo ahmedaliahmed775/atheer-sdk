@@ -1,0 +1,6 @@
+// ملف إعداد المشروع الجذري - يحدد الإضافات المشتركة لجميع الوحدات
+plugins {
+    id("com.android.library") version "8.3.2" apply false
+    id("org.jetbrains.kotlin.android") version "1.9.23" apply false
+    id("com.google.devtools.ksp") version "1.9.23-1.0.20" apply false
+}

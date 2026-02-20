@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    ملف إعداد خدمة APDU لـ HCE (محاكاة البطاقة المضيفة)
+    يحدد هذا الملف قائمة بمعرفات التطبيق (AIDs) التي تستجيب لها الخدمة
+
+    AID الخاص بالمدفوعات: يستخدم AID القياسي لـ Visa/Mastercard
+    A0000000031010 = Visa Credit/Debit
+    A0000000041010 = Mastercard Credit
+    يمكن استبداله بـ AID مخصص للنظام
+-->
+<host-apdu-service
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:description="@string/atheer_hce_description"
+    android:requireDeviceUnlock="false">
+
+    <aid-group
+        android:category="payment"
+        android:description="@string/atheer_payment_description">
+
+        <!-- معرف تطبيق الدفع الخاص بـ Atheer SDK -->
+        <aid-filter android:name="A000000003101001" />
+
+        <!-- معرف تطبيق Visa القياسي للتوافق -->
+        <aid-filter android:name="A0000000031010" />
+
+    </aid-group>
+
+</host-apdu-service>
