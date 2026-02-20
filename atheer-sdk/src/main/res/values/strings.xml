@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- موارد النصوص لمكتبة Atheer SDK -->
+<resources>
+    <!-- وصف خدمة HCE التي تظهر في إعدادات NFC للمستخدم -->
+    <string name="atheer_hce_description">خدمة مدفوعات Atheer NFC</string>
+    <!-- وصف مجموعة الدفع -->
+    <string name="atheer_payment_description">مدفوعات Atheer اللاتلامسية</string>
+</resources>
