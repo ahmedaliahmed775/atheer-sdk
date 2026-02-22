@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- أيقونة NFC -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="96dp"
+    android:height="96dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="@android:color/white"
+        android:pathData="M20,2L4,2C2.9,2 2,2.9 2,4L2,20C2,21.1 2.9,22 4,22L20,22C21.1,22 22,21.1 22,20L22,4C22,2.9 21.1,2 20,2ZM18,14L16.5,14L16.5,10L15,10L15,14L13,14L13,8L11.5,8L11.5,14L10,14L10,11L8.5,11L8.5,14L6,14L6,9.5C6,8.1 7.1,7 8.5,7L15.5,7C16.9,7 18,8.1 18,9.5L18,14Z" />
+</vector>
