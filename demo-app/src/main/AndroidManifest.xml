@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    AndroidManifest.xml لتطبيق Atheer Demo
+    يحتوي على إعلانات الأنشطة والصلاحيات اللازمة
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- صلاحية NFC -->
+    <uses-permission android:name="android.permission.NFC" />
+    <!-- صلاحيات الشبكة -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- NFC اختياري حتى يعمل التطبيق على أجهزة بدون NFC -->
+    <uses-feature android:name="android.hardware.nfc" android:required="false" />
+    <uses-feature android:name="android.hardware.nfc.hce" android:required="false" />
+
+    <application
+        android:name=".AtheerDemoApp"
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.AtheerDemo">
+
+        <!-- شاشة البداية (Splash) -->
+        <activity
+            android:name=".ui.SplashActivity"
+            android:exported="true"
+            android:theme="@style/Theme.AtheerDemo.Splash">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- شاشة تسجيل الدخول -->
+        <activity
+            android:name=".ui.login.LoginActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
+
+        <!-- لوحة التحكم: اختيار المسار -->
+        <activity
+            android:name=".ui.dashboard.DashboardActivity"
+            android:exported="false" />
+
+        <!-- مسار العميل: محاكاة البطاقة (HCE) -->
+        <activity
+            android:name=".ui.customer.CustomerActivity"
+            android:exported="false" />
+
+        <!-- مسار نقطة المبيعات (SoftPOS) -->
+        <activity
+            android:name=".ui.pos.PosActivity"
+            android:exported="false" />
+
+        <!-- شاشة نتيجة المعاملة -->
+        <activity
+            android:name=".ui.result.TransactionResultActivity"
+            android:exported="false" />
+
+    </application>
+
+</manifest>

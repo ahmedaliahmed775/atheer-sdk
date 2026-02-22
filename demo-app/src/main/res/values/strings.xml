@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- اسم التطبيق -->
+    <string name="app_name">أثير - نظام المدفوعات</string>
+
+    <!-- شاشة البداية -->
+    <string name="splash_tagline">مدفوعات NFC ذكية وآمنة</string>
+
+    <!-- شاشة تسجيل الدخول -->
+    <string name="login_title">تسجيل الدخول</string>
+    <string name="login_subtitle">أدخل بياناتك للمتابعة</string>
+    <string name="hint_merchant_id">رقم التاجر / Merchant ID</string>
+    <string name="hint_password">كلمة المرور</string>
+    <string name="btn_login">دخول</string>
+    <string name="login_error_empty">يرجى تعبئة جميع الحقول</string>
+    <string name="login_error_invalid">رقم التاجر أو كلمة المرور غير صحيحة</string>
+    <string name="login_demo_hint">بيانات تجريبية: MERCHANT_001 / 1234</string>
+
+    <!-- شاشة لوحة التحكم -->
+    <string name="dashboard_title">اختر المسار</string>
+    <string name="dashboard_subtitle">حدد نوع الاستخدام للمتابعة</string>
+    <string name="card_customer_title">مسار العميل</string>
+    <string name="card_customer_desc">استخدام الهاتف كبطاقة دفع NFC لاتلامسية</string>
+    <string name="card_pos_title">نقطة المبيعات</string>
+    <string name="card_pos_desc">استخدام الهاتف كجهاز استقبال مدفوعات SoftPOS</string>
+    <string name="btn_logout">تسجيل خروج</string>
+    <string name="merchant_id_label">رقم التاجر: %s</string>
+
+    <!-- شاشة العميل (HCE) -->
+    <string name="customer_title">مسار العميل</string>
+    <string name="customer_nfc_ready">جاهز للدفع</string>
+    <string name="customer_nfc_tap">اقترب من جهاز نقطة البيع للدفع</string>
+    <string name="hint_amount">المبلغ (بالهللة)</string>
+    <string name="hint_card_number">رقم البطاقة</string>
+    <string name="btn_prepare_payment">تجهيز الدفع</string>
+    <string name="payment_ready">✓ الدفع جاهز — اقترب من القارئ</string>
+    <string name="payment_preparing">جارٍ التجهيز…</string>
+    <string name="hce_status_idle">في انتظار بيانات الدفع</string>
+    <string name="hce_status_ready">جاهز للدفع اللاتلامسي</string>
+    <string name="error_invalid_amount">يرجى إدخال مبلغ صحيح</string>
+    <string name="error_invalid_card">يرجى إدخال رقم بطاقة صحيح (16 رقمًا)</string>
+
+    <!-- شاشة نقطة المبيعات (SoftPOS) -->
+    <string name="pos_title">نقطة المبيعات</string>
+    <string name="pos_waiting">في انتظار بطاقة العميل…</string>
+    <string name="pos_tap_card">قرّب بطاقة العميل أو هاتفه من الجهاز</string>
+    <string name="pos_reading">جارٍ قراءة البطاقة…</string>
+    <string name="pos_nfc_unavailable">NFC غير متاح على هذا الجهاز</string>
+    <string name="pos_enable_nfc">يرجى تفعيل NFC من إعدادات الجهاز</string>
+    <string name="btn_open_nfc_settings">فتح إعدادات NFC</string>
+    <string name="hint_pos_amount">المبلغ المطلوب (بالهللة)</string>
+    <string name="btn_start_reading">ابدأ القراءة</string>
+    <string name="btn_stop_reading">إيقاف</string>
+
+    <!-- شاشة النتيجة -->
+    <string name="result_success_title">تمت العملية بنجاح</string>
+    <string name="result_failed_title">فشلت العملية</string>
+    <string name="result_transaction_id">رقم المعاملة</string>
+    <string name="result_amount_label">المبلغ</string>
+    <string name="result_currency_label">العملة</string>
+    <string name="result_merchant_label">رقم التاجر</string>
+    <string name="result_timestamp_label">وقت المعاملة</string>
+    <string name="result_status_synced">مزامنة ✓</string>
+    <string name="result_status_offline">محلي (غير متزامن)</string>
+    <string name="btn_new_transaction">معاملة جديدة</string>
+    <string name="btn_back_dashboard">العودة للرئيسية</string>
+
+    <!-- رسائل عامة -->
+    <string name="loading">جارٍ التحميل…</string>
+    <string name="sar_currency">ريال سعودي</string>
+    <string name="nfc_tag_discovered">تم اكتشاف بطاقة NFC</string>
+    <string name="sdk_init_error">فشل تهيئة SDK. يرجى المحاولة مرة أخرى</string>
+</resources>

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- خلفية دائرية لأيقونة NFC -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="oval">
+    <solid android:color="#1AFFFFFF" />
+    <stroke android:color="#4DFFFFFF" android:width="2dp" />
+    <size android:width="180dp" android:height="180dp" />
+</shape>
