@@ -102,6 +102,48 @@ com.atheer.sdk/
 
 ---
 
+## بناء التطبيق التجريبي (Demo APK)
+
+### الطريقة 1: تحميل من GitHub Actions (مُوصَى به)
+
+يتم بناء ملف APK تلقائياً عند كل تحديث للكود عبر GitHub Actions:
+
+1. اذهب إلى صفحة **Actions** في المستودع على GitHub
+2. اختر workflow بعنوان **Build Demo APK**
+3. اضغط على آخر تشغيل ناجح (علامة ✓ خضراء)
+4. انزل إلى قسم **Artifacts** في أسفل الصفحة
+5. حمّل ملف `demo-app-debug` الذي يحتوي على ملف APK
+
+يمكنك أيضاً تشغيل البناء يدوياً بالضغط على **Run workflow** في صفحة workflow.
+
+### الطريقة 2: من سطر الأوامر
+
+```bash
+# بناء التطبيق التجريبي (Debug APK)
+./gradlew :demo-app:assembleDebug
+
+# موقع ملف APK بعد البناء:
+# demo-app/build/outputs/apk/debug/demo-app-debug.apk
+```
+
+### الطريقة 3: من Android Studio
+
+1. افتح المشروع في Android Studio
+2. اختر وحدة `demo-app` من القائمة المنسدلة
+3. من القائمة: **Build → Build Bundle(s)/APK(s) → Build APK(s)**
+4. بعد الانتهاء اضغط على **locate** للوصول إلى ملف APK
+
+### تثبيت التطبيق التجريبي
+
+```bash
+# تثبيت APK على الجهاز المتصل
+adb install demo-app/build/outputs/apk/debug/demo-app-debug.apk
+```
+
+> **بيانات الدخول التجريبية**: المعرّف: `MERCHANT_001` | كلمة المرور: `1234`
+
+---
+
 ## كيفية دمج المكتبة في مشروعك
 
 ### الخيار 1: نسخ ملف AAR مباشرة

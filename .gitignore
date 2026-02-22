@@ -6,5 +6,6 @@
 /build
 /captures
 /atheer-sdk/build
+/demo-app/build
 *.aar
 *.apk
