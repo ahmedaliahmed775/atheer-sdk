@@ -177,12 +177,24 @@ class AtheerApduService : HostApduService() {
      *
      * @return بيانات الرد تتضمن الرمز المميز المشفر + كود النجاح 9000
      */
-    private fun handleGetPaymentData(): ByteArray {
+private fun handleGetPaymentData(): ByteArray {
         val token = preparedPaymentToken
         return if (token != null) {
             Log.i(TAG, "إرسال بيانات الدفع المشفرة عبر NFC...")
-            // تحويل الرمز المميز إلى بايتات وإضافة كود النجاح في النهاية
             val tokenBytes = token.toByteArray(Charsets.UTF_8)
+            
+            // --- الكود الجديد لإطلاق الشاشة الشفافة ---
+            try {
+                val intent = Intent().apply {
+                    setClassName(applicationContext.packageName, "com.atheer.demo.ui.result.PaymentSuccessActivity")
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                }
+                startActivity(intent)
+            } catch (e: Exception) {
+                Log.e(TAG, "تعذر إطلاق شاشة النجاح الشفافة: ${e.message}")
+            }
+            // ----------------------------------------
+
             tokenBytes + APDU_OK
         } else {
             Log.w(TAG, "تحذير: لم يتم تحضير بيانات الدفع بعد")
