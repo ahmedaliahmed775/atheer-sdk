@@ -26,6 +26,7 @@ class DashboardActivity : AppCompatActivity() {
         setContentView(binding.root)
 
         val merchantId = intent.getStringExtra(EXTRA_MERCHANT_ID) ?: "MERCHANT_001"
+        val accessToken = intent.getStringExtra(EXTRA_ACCESS_TOKEN) ?: ""
 
         // عرض رقم التاجر في الشريط العلوي
         binding.tvMerchantId.text = getString(R.string.merchant_id_label, merchantId)
@@ -35,6 +36,7 @@ class DashboardActivity : AppCompatActivity() {
             startActivity(
                 Intent(this, CustomerActivity::class.java).apply {
                     putExtra(CustomerActivity.EXTRA_MERCHANT_ID, merchantId)
+                    putExtra(CustomerActivity.EXTRA_ACCESS_TOKEN, accessToken)
                 }
             )
         }
@@ -44,6 +46,7 @@ class DashboardActivity : AppCompatActivity() {
             startActivity(
                 Intent(this, PosActivity::class.java).apply {
                     putExtra(PosActivity.EXTRA_MERCHANT_ID, merchantId)
+                    putExtra(PosActivity.EXTRA_ACCESS_TOKEN, accessToken)
                 }
             )
         }
@@ -57,5 +60,6 @@ class DashboardActivity : AppCompatActivity() {
 
     companion object {
         const val EXTRA_MERCHANT_ID = "extra_merchant_id"
+        const val EXTRA_ACCESS_TOKEN = "extra_access_token"
     }
 }

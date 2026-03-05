@@ -27,6 +27,7 @@ class CustomerActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityCustomerBinding
     private var merchantId: String = "MERCHANT_001"
+    private var accessToken: String = ""
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -34,6 +35,7 @@ class CustomerActivity : AppCompatActivity() {
         setContentView(binding.root)
 
         merchantId = intent.getStringExtra(EXTRA_MERCHANT_ID) ?: "MERCHANT_001"
+        accessToken = intent.getStringExtra(EXTRA_ACCESS_TOKEN) ?: ""
 
         binding.btnBack.setOnClickListener { finish() }
         binding.btnPreparePayment.setOnClickListener { preparePayment() }
@@ -79,9 +81,10 @@ class CustomerActivity : AppCompatActivity() {
                     tokenizedCard = tokenizedCard
                 )
 
-                // معالجة المعاملة عبر SDK
+                // معالجة المعاملة عبر SDK مع تمرير الـ Access Token
                 sdk.processTransaction(
                     transaction = transaction,
+                    accessToken = accessToken,
                     onSuccess = { _ ->
                         showPaymentReady()
                         // الانتقال لعرض النتيجة بعد ثانية
@@ -136,5 +139,6 @@ class CustomerActivity : AppCompatActivity() {
 
     companion object {
         const val EXTRA_MERCHANT_ID = "extra_merchant_id"
+        const val EXTRA_ACCESS_TOKEN = "extra_access_token"
     }
 }
