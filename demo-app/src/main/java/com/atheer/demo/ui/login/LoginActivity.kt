@@ -4,8 +4,11 @@ import android.content.Intent
 import android.os.Bundle
 import android.view.View
 import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.lifecycleScope
 import com.atheer.demo.databinding.ActivityLoginBinding
 import com.atheer.demo.ui.dashboard.DashboardActivity
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
  * LoginActivity — شاشة تسجيل الدخول
@@ -52,12 +55,39 @@ class LoginActivity : AppCompatActivity() {
             return
         }
 
-        // الانتقال إلى لوحة التحكم مع تمرير رقم التاجر
-        val intent = Intent(this, DashboardActivity::class.java).apply {
-            putExtra(DashboardActivity.EXTRA_MERCHANT_ID, merchantId)
+        // تعطيل زر الدخول أثناء محاكاة طلب الشبكة
+        binding.btnLogin.isEnabled = false
+
+        // محاكاة اتصال شبكي لعملية Login مع توليد Access Token وهمي
+        lifecycleScope.launch {
+            // محاكاة وقت استجابة الخادم
+            delay(1500)
+
+            // توليد Access Token وهمي يشبه صيغة JWT
+            val fakeAccessToken = generateMockJwtToken(merchantId)
+
+            // الانتقال إلى لوحة التحكم مع تمرير رقم التاجر والـ Token
+            val intent = Intent(this@LoginActivity, DashboardActivity::class.java).apply {
+                putExtra(DashboardActivity.EXTRA_MERCHANT_ID, merchantId)
+                putExtra(DashboardActivity.EXTRA_ACCESS_TOKEN, fakeAccessToken)
+            }
+            startActivity(intent)
+            finish()
         }
-        startActivity(intent)
-        finish()
+    }
+
+    /**
+     * توليد Access Token وهمي بصيغة JWT للمحاكاة التجريبية.
+     * في التطبيق الحقيقي يُستبدل هذا برد الخادم الفعلي.
+     */
+    private fun generateMockJwtToken(merchantId: String): String {
+        val header = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"
+        val payload = android.util.Base64.encodeToString(
+            """{"sub":"$merchantId","iat":${System.currentTimeMillis() / 1000},"exp":${System.currentTimeMillis() / 1000 + 3600},"iss":"atheer-auth-server"}""".toByteArray(),
+            android.util.Base64.NO_WRAP or android.util.Base64.URL_SAFE
+        )
+        val signature = "AtheerSDK_MockSignature_${merchantId.hashCode()}"
+        return "$header.$payload.$signature"
     }
 
     /**

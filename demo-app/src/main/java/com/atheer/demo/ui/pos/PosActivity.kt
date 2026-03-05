@@ -25,6 +25,7 @@ class PosActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityPosBinding
     private var merchantId: String = "MERCHANT_001"
+    private var accessToken: String = ""
     private var nfcAdapter: NfcAdapter? = null
     private var nfcReader: AtheerNfcReader? = null
     private var isReading = false
@@ -35,6 +36,7 @@ class PosActivity : AppCompatActivity() {
         setContentView(binding.root)
 
         merchantId = intent.getStringExtra(EXTRA_MERCHANT_ID) ?: "MERCHANT_001"
+        accessToken = intent.getStringExtra(EXTRA_ACCESS_TOKEN) ?: ""
         nfcAdapter = NfcAdapter.getDefaultAdapter(this)
 
         checkNfcAvailability()
@@ -168,5 +170,6 @@ class PosActivity : AppCompatActivity() {
 
     companion object {
         const val EXTRA_MERCHANT_ID = "extra_merchant_id"
+        const val EXTRA_ACCESS_TOKEN = "extra_access_token"
     }
 }

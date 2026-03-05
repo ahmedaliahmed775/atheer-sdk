@@ -12,6 +12,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
 
 /**
  * الواجهة الرئيسية (Facade) لـ Atheer SDK
@@ -116,11 +117,13 @@ class AtheerSdk private constructor(
      * 5. تحديث حالة المزامنة عند النجاح
      *
      * @param transaction بيانات المعاملة المراد معالجتها
+     * @param accessToken رمز المصادقة (Bearer Token) لإرساله في الـ Authorization Header
      * @param onSuccess دالة رد النداء عند نجاح المعالجة
      * @param onError دالة رد النداء عند الفشل
      */
     fun processTransaction(
         transaction: AtheerTransaction,
+        accessToken: String,
         onSuccess: (String) -> Unit,
         onError: (Exception) -> Unit
     ) {
@@ -160,11 +163,13 @@ class AtheerSdk private constructor(
                         val requestBody = buildTransactionJson(
                             transaction.transactionId,
                             tokenizedCard,
-                            nonce
+                            nonce,
+                            transaction.amount
                         )
                         val response = networkRouter.executeViaCellular(
                             "$apiBaseUrl/transactions",
-                            requestBody
+                            requestBody,
+                            accessToken
                         )
 
                         // الخطوة 5: تحديث حالة المزامنة عند النجاح
@@ -206,9 +211,10 @@ class AtheerSdk private constructor(
      * تُستدعى هذه الدالة عند استعادة الاتصال بالشبكة لإرسال جميع
      * المعاملات التي تمت في الوضع غير المتصل.
      *
+     * @param accessToken رمز المصادقة (Bearer Token) لإرساله في الـ Authorization Header
      * @param onComplete دالة رد النداء عند اكتمال المزامنة مع عدد المعاملات المُزامَنة
      */
-    fun syncPendingTransactions(onComplete: (Int) -> Unit) {
+    fun syncPendingTransactions(accessToken: String, onComplete: (Int) -> Unit) {
         Log.i(TAG, "جاري مزامنة المعاملات غير المتزامنة...")
         sdkScope.launch {
             try {
@@ -218,12 +224,23 @@ class AtheerSdk private constructor(
                 var syncedCount = 0
                 for (entity in unsyncedTransactions) {
                     try {
+                        // فك تشفير المبلغ للحصول على القيمة الأصلية
+                        val decryptedAmount = try {
+                            keystoreManager.decrypt(entity.encryptedAmount).toLongOrNull() ?: 0L
+                        } catch (e: Exception) {
+                            0L
+                        }
                         val requestBody = buildTransactionJson(
                             entity.transactionId,
                             entity.encryptedToken ?: "",
-                            entity.nonce ?: ""
+                            entity.nonce ?: "",
+                            decryptedAmount
                         )
-                        networkRouter.executeViaCellular("$apiBaseUrl/transactions", requestBody)
+                        networkRouter.executeViaCellular(
+                            "$apiBaseUrl/transactions",
+                            requestBody,
+                            accessToken
+                        )
                         database.transactionDao().updateSyncStatus(entity.transactionId, true)
                         syncedCount++
                         Log.d(TAG, "تمت مزامنة المعاملة: ${entity.transactionId}")
@@ -248,18 +265,37 @@ class AtheerSdk private constructor(
     /**
      * بناء جسم طلب JSON لإرسال بيانات المعاملة للخادم
      *
+     * يتبع هيكل JSON المعياري للمحافظ المالية بكائنين رئيسيين:
+     * - header: يحتوي على معرف الخدمة ومعرف المعاملة
+     * - body: يحتوي على بيانات الدفع الأساسية
+     *
      * @param transactionId معرف المعاملة
      * @param token الرمز المميز للبطاقة
      * @param nonce الرقم العشوائي لمنع هجمات إعادة التشغيل
+     * @param amount قيمة المعاملة
      * @return جسم الطلب بصيغة JSON
      */
     private fun buildTransactionJson(
         transactionId: String,
         token: String,
-        nonce: String
+        nonce: String,
+        amount: Long
     ): String {
-        // بناء يدوي لـ JSON بدون مكتبات إضافية للحفاظ على حجم المكتبة صغيراً
-        return """{"transactionId":"$transactionId","token":"$token","nonce":"$nonce","merchantId":"$merchantId"}"""
+        // بناء JSON منظم باستخدام JSONObject لضمان سلامة البناء ومنع هجمات الحقن
+        val header = JSONObject().apply {
+            put("serviceName", "ATHEER.NFC.PAYMENT")
+            put("transactionId", transactionId)
+        }
+        val body = JSONObject().apply {
+            put("merchantId", merchantId)
+            put("atheerToken", token)
+            put("nonce", nonce)
+            put("amount", amount)
+        }
+        return JSONObject().apply {
+            put("header", header)
+            put("body", body)
+        }.toString()
     }
 
     /**

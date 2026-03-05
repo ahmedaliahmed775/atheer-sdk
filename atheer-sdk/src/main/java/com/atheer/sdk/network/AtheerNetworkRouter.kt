@@ -60,10 +60,15 @@ class AtheerNetworkRouter(private val context: Context) {
      *
      * @param urlString رابط الخادم المراد الاتصال به
      * @param requestBody جسم الطلب (JSON أو أي صيغة أخرى) - null لطلبات GET
+     * @param accessToken رمز المصادقة (Bearer Token) - اختياري، يُضاف كـ Authorization Header إن وُجد
      * @return محتوى الاستجابة كنص
      * @throws IOException في حالة فشل الاتصال أو الطلب
      */
-    suspend fun executeViaCellular(urlString: String, requestBody: String? = null): String {
+    suspend fun executeViaCellular(
+        urlString: String,
+        requestBody: String? = null,
+        accessToken: String? = null
+    ): String {
         Log.d(TAG, "جاري توجيه الطلب عبر الشبكة الخلوية: $urlString")
 
         // الحصول على شبكة خلوية نشطة أو انتظار توفرها
@@ -74,7 +79,7 @@ class AtheerNetworkRouter(private val context: Context) {
         Log.i(TAG, "تم الحصول على الشبكة الخلوية بنجاح - جاري إرسال الطلب...")
 
         return withTimeoutOrNull(REQUEST_TIMEOUT_MS) {
-            executeOnNetwork(cellularNetwork, urlString, requestBody)
+            executeOnNetwork(cellularNetwork, urlString, requestBody, accessToken)
         } ?: throw IOException("انتهت مهلة انتظار الطلب")
     }
 
@@ -142,12 +147,14 @@ class AtheerNetworkRouter(private val context: Context) {
      * @param network الشبكة المحددة لتنفيذ الطلب عليها
      * @param urlString رابط الخادم
      * @param requestBody جسم الطلب أو null لطلبات GET
+     * @param accessToken رمز المصادقة (Bearer Token) - اختياري
      * @return محتوى الاستجابة
      */
     private fun executeOnNetwork(
         network: Network,
         urlString: String,
-        requestBody: String?
+        requestBody: String?,
+        accessToken: String? = null
     ): String {
         Log.d(TAG, "جاري تنفيذ الطلب على الشبكة الخلوية: $urlString")
         val url = URL(urlString)
@@ -160,6 +167,11 @@ class AtheerNetworkRouter(private val context: Context) {
                 setRequestProperty("Content-Type", "application/json; charset=UTF-8")
                 setRequestProperty("Accept", "application/json")
                 setRequestProperty("X-Atheer-Source", "cellular")
+
+                // إضافة Authorization Header إذا كان التوكن موجوداً
+                if (accessToken != null) {
+                    setRequestProperty("Authorization", "Bearer $accessToken")
+                }
 
                 if (requestBody != null) {
                     requestMethod = "POST"
