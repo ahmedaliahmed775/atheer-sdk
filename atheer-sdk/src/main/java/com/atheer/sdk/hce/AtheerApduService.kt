@@ -3,6 +3,7 @@ package com.atheer.sdk.hce
 import android.nfc.cardemulation.HostApduService
 import android.os.Bundle
 import android.util.Log
+import android.content.Intent
 import com.atheer.sdk.security.AtheerKeystoreManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
