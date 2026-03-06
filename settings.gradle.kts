@@ -16,4 +16,3 @@ dependencyResolutionManagement {
 
 rootProject.name = "atheer-sdk"
 include(":atheer-sdk")
-include(":demo-app")
