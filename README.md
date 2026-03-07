@@ -4,7 +4,9 @@
 
 ## نظرة عامة
 
-**Atheer SDK** هي مكتبة Android متكاملة مصممة لتمكين التطبيقات من تنفيذ مدفوعات NFC اللاتلامسية بأمان عالٍ، سواء في الوضع المتصل بالإنترنت أو الوضع غير المتصل. تنتج المكتبة ملف `.aar` يمكن للتطبيقات الخارجية تضمينه مباشرة.
+**Atheer SDK** هي مكتبة Android بدون واجهة (Headless) مصممة للتضمين في تطبيقات المحافظ الرقمية (Host Wallet Apps) لتمكينها من تنفيذ مدفوعات NFC اللاتلامسية بأمان عالٍ، سواء في الوضع المتصل بالإنترنت أو الوضع غير المتصل (Offline-First). تنتج المكتبة ملف `.aar` يمكن للتطبيقات الخارجية تضمينه مباشرة.
+
+> **ملاحظة:** SDK لا يتعامل مع إدارة حسابات المستخدمين (تسجيل دخول/تسجيل/رصيد/سجل معاملات). هذه مسؤولية التطبيق المضيف (Host Wallet App).
 
 ---
 
@@ -14,25 +16,20 @@
 
 ```
 com.atheer.sdk/
-├── AtheerSdk.kt              ← واجهة Facade الرئيسية
+├── AtheerSdk.kt              ← واجهة Facade الرئيسية (Headless Plugin)
 ├── model/
 │   ├── AtheerTransaction.kt  ← نموذج المعاملة
-│   ├── LoginRequest.kt       ← نموذج طلب تسجيل الدخول
-│   ├── LoginResponse.kt      ← نموذج استجابة تسجيل الدخول
-│   ├── SignupRequest.kt      ← نموذج طلب التسجيل
-│   ├── SignupResponse.kt     ← نموذج استجابة التسجيل
-│   ├── BalanceResponse.kt    ← نموذج استجابة الرصيد
-│   ├── ChargeRequest.kt      ← نموذج طلب الشحن
-│   ├── ChargeResponse.kt     ← نموذج استجابة الشحن
-│   └── HistoryResponse.kt    ← نموذج سجل المعاملات
+│   ├── ChargeRequest.kt      ← نموذج طلب الشحن (هيكل متداخل)
+│   └── ChargeResponse.kt     ← نموذج استجابة الشحن
 ├── hce/
-│   └── AtheerApduService.kt  ← وحدة HCE للمدفوعات اللاتلامسية
+│   └── AtheerApduService.kt  ← وحدة HCE للمدفوعات اللاتلامسية (Offline Token Vault)
 ├── nfc/
 │   └── AtheerNfcReader.kt    ← وحدة SoftPOS لقراءة NFC
 ├── network/
 │   └── AtheerNetworkRouter.kt← توجيه الشبكة عبر الشبكة الخلوية
 ├── security/
-│   └── AtheerKeystoreManager.kt ← التشفير والـ Tokenization
+│   ├── AtheerKeystoreManager.kt ← التشفير والـ Tokenization
+│   └── AtheerTokenManager.kt    ← خزنة الرموز المميزة غير المتصلة
 └── database/
     ├── AtheerDatabase.kt     ← قاعدة البيانات المحلية
     ├── TransactionDao.kt     ← واجهة الوصول للبيانات
@@ -44,23 +41,26 @@ com.atheer.sdk/
 ## الوحدات الرئيسية
 
 ### 1. واجهة SDK الرئيسية (`AtheerSdk.kt`)
-نقطة الدخول الوحيدة للتطبيقات الخارجية. تستخدم نمط Singleton وتوفر دوال معالجة المعاملات والمزامنة.
+نقطة الدخول الوحيدة للتطبيقات الخارجية. تستخدم نمط Singleton وتوفر دوال معالجة المعاملات والمزامنة وتزويد الرموز غير المتصلة وعمليات الشحن.
 
-### 2. وحدة HCE (`AtheerApduService.kt`)
-تحول الهاتف إلى بطاقة NFC لمحاكاة المدفوعات اللاتلامسية في الوضع غير المتصل. مسجلة في `AndroidManifest.xml` مع ملف `apduservice.xml`.
+### 2. خزنة الرموز المميزة (`AtheerTokenManager.kt`)
+تخزن الرموز المميزة المُزوَّدة مسبقاً (Pre-provisioned Tokens) من التطبيق المضيف. عند الدفع بدون إنترنت، تستهلك خدمة HCE رمزاً واحداً وتحذفه لمنع إعادة الاستخدام (مشابه لنظام Apple Pay).
 
-### 3. وحدة SoftPOS (`AtheerNfcReader.kt`)
+### 3. وحدة HCE (`AtheerApduService.kt`)
+تحول الهاتف إلى بطاقة NFC لمحاكاة المدفوعات اللاتلامسية. تستهلك الرموز المميزة من خزنة الرموز (`AtheerTokenManager`) عند استقبال أمر GET DATA من جهاز POS.
+
+### 4. وحدة SoftPOS (`AtheerNfcReader.kt`)
 تحول الهاتف إلى جهاز نقطة بيع (POS Terminal) لاستقبال المدفوعات من بطاقات NFC والهواتف الأخرى.
 
-### 4. وحدة الشبكة (`AtheerNetworkRouter.kt`)
+### 5. وحدة الشبكة (`AtheerNetworkRouter.kt`)
 تفرض توجيه طلبات الدفع عبر شبكة البيانات الخلوية حصراً باستخدام `ConnectivityManager` و `TRANSPORT_CELLULAR`.
 
-### 5. وحدة الأمان (`AtheerKeystoreManager.kt`)
+### 6. وحدة الأمان (`AtheerKeystoreManager.kt`)
 - **Tokenization**: تحويل بيانات البطاقة إلى رمز مميز آمن
 - **منع Replay Attacks**: توليد Nonce فريد لكل معاملة
 - **التشفير**: AES-256-GCM مع مفاتيح محمية بـ Android Keystore
 
-### 6. قاعدة البيانات (`AtheerDatabase.kt`)
+### 7. قاعدة البيانات (`AtheerDatabase.kt`)
 قاعدة بيانات Room لتخزين سجلات المعاملات المشفرة محلياً للوضع غير المتصل.
 
 ---
@@ -147,6 +147,19 @@ class MyApp : Application() {
 }
 ```
 
+### تزويد الرموز المميزة غير المتصلة (Offline Token Provisioning)
+
+```kotlin
+// عند الاتصال بالإنترنت، زوّد الخزنة بالرموز المميزة
+val sdk = AtheerSdk.getInstance()
+val tokens = listOf("ATK_token1_encrypted", "ATK_token2_encrypted", "ATK_token3_encrypted")
+sdk.provisionOfflineTokens(tokens)
+
+// التحقق من عدد الرموز المتبقية
+val remaining = sdk.getRemainingTokensCount()
+Log.i("Tokens", "عدد الرموز المتبقية: $remaining")
+```
+
 ### معالجة معاملة دفع
 
 ```kotlin
@@ -171,16 +184,16 @@ sdk.processTransaction(
 )
 ```
 
-### تفعيل خدمة HCE (وضع البطاقة)
+### خدمة HCE (وضع البطاقة — الدفع غير المتصل)
+
+خدمة HCE تعمل تلقائياً عبر خزنة الرموز المميزة. عند اقتراب الهاتف من جهاز POS:
+1. يُرسِل POS أمر SELECT AID → تردّ الخدمة بالموافقة (9000)
+2. يُرسِل POS أمر GET DATA → تستهلك الخدمة رمزاً من الخزنة وتُرسِله
+3. إذا لم تتوفر رموز → تردّ الخدمة بخطأ (6A83)
 
 ```kotlin
-// تهيئة خدمة HCE في Activity أو Service
-val apduService = AtheerApduService()
-apduService.preparePayment(
-    cardData = "4111111111111111", // رقم البطاقة
-    amount = 10000L,
-    currency = "SAR"
-)
+// تأكد من تزويد الخزنة بالرموز قبل استخدام HCE
+sdk.provisionOfflineTokens(tokens)
 ```
 
 ### تفعيل SoftPOS (وضع نقطة البيع)
@@ -215,57 +228,6 @@ sdk.syncPendingTransactions(accessToken = "YOUR_ACCESS_TOKEN") { syncedCount ->
 }
 ```
 
-### تسجيل الدخول
-
-```kotlin
-// في Coroutine أو ViewModel
-val sdk = AtheerSdk.getInstance()
-val result = sdk.login(LoginRequest(username = "user@example.com", password = "password"))
-result.onSuccess { response ->
-    val accessToken = response.accessToken
-    Log.i("Auth", "تم تسجيل الدخول - التوكن: $accessToken")
-}.onFailure { error ->
-    Log.e("Auth", "فشل تسجيل الدخول: ${error.message}")
-}
-```
-
-### تسجيل مستخدم جديد
-
-```kotlin
-val result = sdk.signup(
-    SignupRequest(
-        username = "newuser",
-        password = "password",
-        email = "newuser@example.com",
-        phone = "+966500000000"
-    )
-)
-result.onSuccess { response ->
-    Log.i("Auth", "تم التسجيل - معرف المستخدم: ${response.userId}")
-}
-```
-
-### الاستعلام عن الرصيد
-
-```kotlin
-val result = sdk.getBalance(accessToken = "YOUR_ACCESS_TOKEN")
-result.onSuccess { response ->
-    Log.i("Balance", "الرصيد: ${response.balance} ${response.currency}")
-}
-```
-
-### سجل المعاملات
-
-```kotlin
-val result = sdk.getHistory(accessToken = "YOUR_ACCESS_TOKEN")
-result.onSuccess { response ->
-    Log.i("History", "عدد المعاملات: ${response.totalCount}")
-    response.transactions.forEach { tx ->
-        Log.d("History", "معاملة: ${tx.transactionId} - ${tx.amount} ${tx.currency}")
-    }
-}
-```
-
 ### إجراء عملية شحن
 
 ```kotlin
@@ -274,6 +236,7 @@ val result = sdk.charge(
         amount = 5000L, // 50.00 ريال (بالهللة)
         currency = "SAR",
         merchantId = "MERCHANT_001",
+        atheerToken = "ATK_captured_token_from_pos",
         description = "شحن رصيد"
     ),
     accessToken = "YOUR_ACCESS_TOKEN"
@@ -317,6 +280,7 @@ result.onSuccess { response ->
 - **Nonce**: رقم عشوائي فريد لكل معاملة لمنع هجمات إعادة التشغيل
 - **Tokenization**: بيانات البطاقة الحقيقية لا تُخزَّن ولا تُرسَل أبداً
 - **تشفير الحقول**: البيانات الحساسة مشفرة قبل تخزينها في قاعدة البيانات
+- **خزنة الرموز غير المتصلة**: الرموز المميزة تُستهلَك مرة واحدة فقط ولا يمكن إعادة استخدامها
 
 ---
 
