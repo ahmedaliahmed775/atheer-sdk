@@ -16,7 +16,15 @@
 com.atheer.sdk/
 ├── AtheerSdk.kt              ← واجهة Facade الرئيسية
 ├── model/
-│   └── AtheerTransaction.kt  ← نماذج البيانات
+│   ├── AtheerTransaction.kt  ← نموذج المعاملة
+│   ├── LoginRequest.kt       ← نموذج طلب تسجيل الدخول
+│   ├── LoginResponse.kt      ← نموذج استجابة تسجيل الدخول
+│   ├── SignupRequest.kt      ← نموذج طلب التسجيل
+│   ├── SignupResponse.kt     ← نموذج استجابة التسجيل
+│   ├── BalanceResponse.kt    ← نموذج استجابة الرصيد
+│   ├── ChargeRequest.kt      ← نموذج طلب الشحن
+│   ├── ChargeResponse.kt     ← نموذج استجابة الشحن
+│   └── HistoryResponse.kt    ← نموذج سجل المعاملات
 ├── hce/
 │   └── AtheerApduService.kt  ← وحدة HCE للمدفوعات اللاتلامسية
 ├── nfc/
@@ -102,48 +110,6 @@ com.atheer.sdk/
 
 ---
 
-## بناء التطبيق التجريبي (Demo APK)
-
-### الطريقة 1: تحميل من GitHub Actions (مُوصَى به)
-
-يتم بناء ملف APK تلقائياً عند كل تحديث للكود عبر GitHub Actions:
-
-1. اذهب إلى صفحة **Actions** في المستودع على GitHub
-2. اختر workflow بعنوان **Build Demo APK**
-3. اضغط على آخر تشغيل ناجح (علامة ✓ خضراء)
-4. انزل إلى قسم **Artifacts** في أسفل الصفحة
-5. حمّل ملف `demo-app-debug` الذي يحتوي على ملف APK
-
-يمكنك أيضاً تشغيل البناء يدوياً بالضغط على **Run workflow** في صفحة workflow.
-
-### الطريقة 2: من سطر الأوامر
-
-```bash
-# بناء التطبيق التجريبي (Debug APK)
-./gradlew :demo-app:assembleDebug
-
-# موقع ملف APK بعد البناء:
-# demo-app/build/outputs/apk/debug/demo-app-debug.apk
-```
-
-### الطريقة 3: من Android Studio
-
-1. افتح المشروع في Android Studio
-2. اختر وحدة `demo-app` من القائمة المنسدلة
-3. من القائمة: **Build → Build Bundle(s)/APK(s) → Build APK(s)**
-4. بعد الانتهاء اضغط على **locate** للوصول إلى ملف APK
-
-### تثبيت التطبيق التجريبي
-
-```bash
-# تثبيت APK على الجهاز المتصل
-adb install demo-app/build/outputs/apk/debug/demo-app-debug.apk
-```
-
-> **بيانات الدخول التجريبية**: المعرّف: `MERCHANT_001` | كلمة المرور: `1234`
-
----
-
 ## كيفية دمج المكتبة في مشروعك
 
 ### الخيار 1: نسخ ملف AAR مباشرة
@@ -158,31 +124,6 @@ dependencies {
     // تبعيات مطلوبة مع المكتبة
     implementation("androidx.room:room-runtime:2.6.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
-}
-```
-
-### الخيار 2: نشر في Maven Local
-
-```bash
-# نشر في مستودع Maven المحلي
-./gradlew :atheer-sdk:publishToMavenLocal
-```
-
-ثم في مشروعك:
-
-```kotlin
-// settings.gradle.kts
-dependencyResolutionManagement {
-    repositories {
-        mavenLocal()
-        google()
-        mavenCentral()
-    }
-}
-
-// build.gradle.kts
-dependencies {
-    implementation("com.atheer:atheer-sdk:1.0.0")
 }
 ```
 
@@ -214,11 +155,13 @@ val transaction = AtheerTransaction(
     transactionId = "TXN_${System.currentTimeMillis()}",
     amount = 10000L, // 100.00 ريال (بالهللة)
     currency = "SAR",
-    merchantId = "MERCHANT_001"
+    merchantId = "MERCHANT_001",
+    tokenizedCard = "ATK_..." // الرمز المميز المُعدَّ مسبقاً
 )
 
 sdk.processTransaction(
     transaction = transaction,
+    accessToken = "YOUR_ACCESS_TOKEN",
     onSuccess = { response ->
         Log.d("Payment", "نجاح الدفع: $response")
     },
@@ -267,8 +210,76 @@ nfcAdapter?.enableReaderMode(
 
 ```kotlin
 // مزامنة المعاملات عند استعادة الاتصال بالشبكة
-sdk.syncPendingTransactions { syncedCount ->
+sdk.syncPendingTransactions(accessToken = "YOUR_ACCESS_TOKEN") { syncedCount ->
     Log.i("Sync", "تمت مزامنة $syncedCount معاملة بنجاح")
+}
+```
+
+### تسجيل الدخول
+
+```kotlin
+// في Coroutine أو ViewModel
+val sdk = AtheerSdk.getInstance()
+val result = sdk.login(LoginRequest(username = "user@example.com", password = "password"))
+result.onSuccess { response ->
+    val accessToken = response.accessToken
+    Log.i("Auth", "تم تسجيل الدخول - التوكن: $accessToken")
+}.onFailure { error ->
+    Log.e("Auth", "فشل تسجيل الدخول: ${error.message}")
+}
+```
+
+### تسجيل مستخدم جديد
+
+```kotlin
+val result = sdk.signup(
+    SignupRequest(
+        username = "newuser",
+        password = "password",
+        email = "newuser@example.com",
+        phone = "+966500000000"
+    )
+)
+result.onSuccess { response ->
+    Log.i("Auth", "تم التسجيل - معرف المستخدم: ${response.userId}")
+}
+```
+
+### الاستعلام عن الرصيد
+
+```kotlin
+val result = sdk.getBalance(accessToken = "YOUR_ACCESS_TOKEN")
+result.onSuccess { response ->
+    Log.i("Balance", "الرصيد: ${response.balance} ${response.currency}")
+}
+```
+
+### سجل المعاملات
+
+```kotlin
+val result = sdk.getHistory(accessToken = "YOUR_ACCESS_TOKEN")
+result.onSuccess { response ->
+    Log.i("History", "عدد المعاملات: ${response.totalCount}")
+    response.transactions.forEach { tx ->
+        Log.d("History", "معاملة: ${tx.transactionId} - ${tx.amount} ${tx.currency}")
+    }
+}
+```
+
+### إجراء عملية شحن
+
+```kotlin
+val result = sdk.charge(
+    request = ChargeRequest(
+        amount = 5000L, // 50.00 ريال (بالهللة)
+        currency = "SAR",
+        merchantId = "MERCHANT_001",
+        description = "شحن رصيد"
+    ),
+    accessToken = "YOUR_ACCESS_TOKEN"
+)
+result.onSuccess { response ->
+    Log.i("Charge", "نجاح الشحن - معرف المعاملة: ${response.transactionId}")
 }
 ```
 
