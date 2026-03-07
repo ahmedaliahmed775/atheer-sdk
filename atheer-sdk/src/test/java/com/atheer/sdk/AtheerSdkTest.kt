@@ -1,10 +1,21 @@
 package com.atheer.sdk
 
+import com.atheer.sdk.model.BalanceResponse
+import com.atheer.sdk.model.ChargeRequest
+import com.atheer.sdk.model.ChargeResponse
+import com.atheer.sdk.model.HistoryResponse
+import com.atheer.sdk.model.HistoryTransaction
+import com.atheer.sdk.model.LoginRequest
+import com.atheer.sdk.model.LoginResponse
+import com.atheer.sdk.model.SignupRequest
+import com.atheer.sdk.model.SignupResponse
+import org.json.JSONObject
 import com.atheer.sdk.security.AtheerKeystoreManager
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -120,6 +131,194 @@ class AtheerSdkTest {
     fun `اختبار رفض كود خطأ APDU`() {
         val errorResponse = byteArrayOf(0x6A.toByte(), 0x82.toByte())
         assertFalse("يجب أن يُرفَض رد APDU الخاطئ 6A82", isApduResponseOk(errorResponse))
+    }
+
+    // ==================== اختبارات نماذج البيانات الجديدة ====================
+
+    /** اختبار إنشاء LoginRequest وصحة حقوله */
+    @Test
+    fun `اختبار إنشاء LoginRequest بحقول صحيحة`() {
+        val request = LoginRequest(username = "user@example.com", password = "secret123")
+        assertEquals("user@example.com", request.username)
+        assertEquals("secret123", request.password)
+    }
+
+    /** اختبار إنشاء LoginResponse وتحليل JSON */
+    @Test
+    fun `اختبار تحليل LoginResponse من JSON`() {
+        val json = JSONObject().apply {
+            put("accessToken", "eyJhbGciOiJSUzI1NiJ9.token")
+            put("tokenType", "Bearer")
+            put("expiresIn", 3600L)
+        }
+        val response = LoginResponse(
+            accessToken = json.getString("accessToken"),
+            tokenType = json.optString("tokenType", "Bearer"),
+            expiresIn = if (json.has("expiresIn")) json.getLong("expiresIn") else null
+        )
+        assertEquals("eyJhbGciOiJSUzI1NiJ9.token", response.accessToken)
+        assertEquals("Bearer", response.tokenType)
+        assertEquals(3600L, response.expiresIn)
+    }
+
+    /** اختبار القيم الافتراضية في LoginResponse */
+    @Test
+    fun `اختبار القيم الافتراضية في LoginResponse`() {
+        val response = LoginResponse(accessToken = "token123")
+        assertEquals("Bearer", response.tokenType)
+        assertNull(response.expiresIn)
+    }
+
+    /** اختبار إنشاء SignupRequest مع حقول اختيارية */
+    @Test
+    fun `اختبار إنشاء SignupRequest مع حقول اختيارية`() {
+        val request = SignupRequest(
+            username = "newuser",
+            password = "pass123",
+            email = "newuser@example.com",
+            phone = "+966501234567"
+        )
+        assertEquals("newuser", request.username)
+        assertEquals("pass123", request.password)
+        assertEquals("newuser@example.com", request.email)
+        assertEquals("+966501234567", request.phone)
+    }
+
+    /** اختبار إنشاء SignupRequest بدون حقول اختيارية */
+    @Test
+    fun `اختبار إنشاء SignupRequest بدون حقول اختيارية`() {
+        val request = SignupRequest(username = "newuser", password = "pass123")
+        assertNull(request.email)
+        assertNull(request.phone)
+    }
+
+    /** اختبار تحليل SignupResponse من JSON */
+    @Test
+    fun `اختبار تحليل SignupResponse من JSON`() {
+        val json = JSONObject().apply {
+            put("userId", "USR_12345")
+            put("message", "تم إنشاء الحساب بنجاح")
+        }
+        val response = SignupResponse(
+            userId = json.getString("userId"),
+            message = if (json.has("message")) json.getString("message") else null
+        )
+        assertEquals("USR_12345", response.userId)
+        assertEquals("تم إنشاء الحساب بنجاح", response.message)
+    }
+
+    /** اختبار تحليل BalanceResponse من JSON */
+    @Test
+    fun `اختبار تحليل BalanceResponse من JSON`() {
+        val json = JSONObject().apply {
+            put("balance", 1500.75)
+            put("currency", "SAR")
+            put("accountId", "ACC_001")
+        }
+        val response = BalanceResponse(
+            balance = json.getDouble("balance"),
+            currency = json.getString("currency"),
+            accountId = if (json.has("accountId")) json.getString("accountId") else null
+        )
+        assertEquals(1500.75, response.balance, 0.001)
+        assertEquals("SAR", response.currency)
+        assertEquals("ACC_001", response.accountId)
+    }
+
+    /** اختبار BalanceResponse بدون accountId */
+    @Test
+    fun `اختبار BalanceResponse بدون accountId`() {
+        val response = BalanceResponse(balance = 500.0, currency = "USD")
+        assertNull(response.accountId)
+    }
+
+    /** اختبار تحليل HistoryResponse من JSON */
+    @Test
+    fun `اختبار تحليل HistoryResponse من JSON`() {
+        val txJson = JSONObject().apply {
+            put("transactionId", "TXN_001")
+            put("amount", 200.0)
+            put("currency", "SAR")
+            put("timestamp", 1700000000000L)
+            put("status", "SUCCESS")
+        }
+        val arrayJson = org.json.JSONArray().apply { put(txJson) }
+        val rootJson = JSONObject().apply {
+            put("transactions", arrayJson)
+            put("totalCount", 1)
+        }
+
+        val transactions = mutableListOf<HistoryTransaction>()
+        val arr = rootJson.getJSONArray("transactions")
+        for (i in 0 until arr.length()) {
+            val item = arr.getJSONObject(i)
+            transactions.add(
+                HistoryTransaction(
+                    transactionId = item.getString("transactionId"),
+                    amount = item.getDouble("amount"),
+                    currency = item.getString("currency"),
+                    timestamp = item.getLong("timestamp"),
+                    status = item.getString("status")
+                )
+            )
+        }
+        val response = HistoryResponse(
+            transactions = transactions,
+            totalCount = rootJson.optInt("totalCount", transactions.size)
+        )
+
+        assertEquals(1, response.totalCount)
+        assertEquals(1, response.transactions.size)
+        assertEquals("TXN_001", response.transactions[0].transactionId)
+        assertEquals(200.0, response.transactions[0].amount, 0.001)
+        assertEquals("SAR", response.transactions[0].currency)
+        assertEquals("SUCCESS", response.transactions[0].status)
+    }
+
+    /** اختبار إنشاء ChargeRequest وبناء JSON */
+    @Test
+    fun `اختبار بناء JSON من ChargeRequest`() {
+        val request = ChargeRequest(
+            amount = 5000L,
+            currency = "SAR",
+            merchantId = "MERCHANT_001",
+            description = "شحن رصيد"
+        )
+        val json = JSONObject().apply {
+            put("amount", request.amount)
+            put("currency", request.currency)
+            put("merchantId", request.merchantId)
+            if (request.description != null) put("description", request.description)
+        }
+        assertEquals(5000L, json.getLong("amount"))
+        assertEquals("SAR", json.getString("currency"))
+        assertEquals("MERCHANT_001", json.getString("merchantId"))
+        assertEquals("شحن رصيد", json.getString("description"))
+    }
+
+    /** اختبار تحليل ChargeResponse من JSON */
+    @Test
+    fun `اختبار تحليل ChargeResponse من JSON`() {
+        val json = JSONObject().apply {
+            put("transactionId", "TXN_CHARGE_001")
+            put("status", "SUCCESS")
+            put("message", "تمت عملية الشحن بنجاح")
+        }
+        val response = ChargeResponse(
+            transactionId = json.getString("transactionId"),
+            status = json.getString("status"),
+            message = if (json.has("message")) json.getString("message") else null
+        )
+        assertEquals("TXN_CHARGE_001", response.transactionId)
+        assertEquals("SUCCESS", response.status)
+        assertEquals("تمت عملية الشحن بنجاح", response.message)
+    }
+
+    /** اختبار ChargeResponse بدون message */
+    @Test
+    fun `اختبار ChargeResponse بدون message`() {
+        val response = ChargeResponse(transactionId = "TXN_001", status = "PENDING")
+        assertNull(response.message)
     }
 
     // ==================== دوال مساعدة للاختبار ====================

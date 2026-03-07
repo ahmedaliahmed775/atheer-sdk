@@ -5,6 +5,15 @@ import android.util.Log
 import com.atheer.sdk.database.AtheerDatabase
 import com.atheer.sdk.database.TransactionEntity
 import com.atheer.sdk.model.AtheerTransaction
+import com.atheer.sdk.model.BalanceResponse
+import com.atheer.sdk.model.ChargeRequest
+import com.atheer.sdk.model.ChargeResponse
+import com.atheer.sdk.model.HistoryResponse
+import com.atheer.sdk.model.HistoryTransaction
+import com.atheer.sdk.model.LoginRequest
+import com.atheer.sdk.model.LoginResponse
+import com.atheer.sdk.model.SignupRequest
+import com.atheer.sdk.model.SignupResponse
 import com.atheer.sdk.network.AtheerNetworkRouter
 import com.atheer.sdk.security.AtheerKeystoreManager
 import kotlinx.coroutines.CoroutineScope
@@ -296,6 +305,167 @@ class AtheerSdk private constructor(
             put("header", header)
             put("body", body)
         }.toString()
+    }
+
+    /**
+     * تسجيل الدخول والحصول على رمز المصادقة
+     *
+     * @param request بيانات تسجيل الدخول (اسم المستخدم وكلمة المرور)
+     * @return Result يحتوي على LoginResponse عند النجاح أو Exception عند الفشل
+     */
+    suspend fun login(request: LoginRequest): Result<LoginResponse> {
+        Log.i(TAG, "جاري تسجيل الدخول - المستخدم: ${request.username}")
+        return try {
+            val body = JSONObject().apply {
+                put("username", request.username)
+                put("password", request.password)
+            }.toString()
+            val responseJson = networkRouter.executeViaCellular("$apiBaseUrl/auth/login", body)
+            val json = JSONObject(responseJson)
+            val loginResponse = LoginResponse(
+                accessToken = json.getString("accessToken"),
+                tokenType = json.optString("tokenType", "Bearer"),
+                expiresIn = if (json.has("expiresIn")) json.getLong("expiresIn") else null
+            )
+            Log.i(TAG, "تم تسجيل الدخول بنجاح")
+            Result.success(loginResponse)
+        } catch (e: Exception) {
+            Log.e(TAG, "فشل تسجيل الدخول: ${e.message}", e)
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * تسجيل مستخدم جديد
+     *
+     * @param request بيانات التسجيل
+     * @return Result يحتوي على SignupResponse عند النجاح أو Exception عند الفشل
+     */
+    suspend fun signup(request: SignupRequest): Result<SignupResponse> {
+        Log.i(TAG, "جاري تسجيل مستخدم جديد - اسم المستخدم: ${request.username}")
+        return try {
+            val body = JSONObject().apply {
+                put("username", request.username)
+                put("password", request.password)
+                if (request.email != null) put("email", request.email)
+                if (request.phone != null) put("phone", request.phone)
+            }.toString()
+            val responseJson = networkRouter.executeViaCellular("$apiBaseUrl/auth/signup", body)
+            val json = JSONObject(responseJson)
+            val signupResponse = SignupResponse(
+                userId = json.getString("userId"),
+                message = if (json.has("message")) json.getString("message") else null
+            )
+            Log.i(TAG, "تم تسجيل المستخدم الجديد بنجاح - معرف المستخدم: ${signupResponse.userId}")
+            Result.success(signupResponse)
+        } catch (e: Exception) {
+            Log.e(TAG, "فشل تسجيل المستخدم: ${e.message}", e)
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * استعلام عن رصيد الحساب
+     *
+     * @param accessToken رمز المصادقة (Bearer Token)
+     * @return Result يحتوي على BalanceResponse عند النجاح أو Exception عند الفشل
+     */
+    suspend fun getBalance(accessToken: String): Result<BalanceResponse> {
+        Log.i(TAG, "جاري استعلام الرصيد...")
+        return try {
+            val responseJson = networkRouter.executeViaCellular(
+                "$apiBaseUrl/account/balance",
+                null,
+                accessToken
+            )
+            val json = JSONObject(responseJson)
+            val balanceResponse = BalanceResponse(
+                balance = json.getDouble("balance"),
+                currency = json.getString("currency"),
+                accountId = if (json.has("accountId")) json.getString("accountId") else null
+            )
+            Log.i(TAG, "تم الحصول على الرصيد بنجاح: ${balanceResponse.balance} ${balanceResponse.currency}")
+            Result.success(balanceResponse)
+        } catch (e: Exception) {
+            Log.e(TAG, "فشل استعلام الرصيد: ${e.message}", e)
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * استعلام عن سجل المعاملات
+     *
+     * @param accessToken رمز المصادقة (Bearer Token)
+     * @return Result يحتوي على HistoryResponse عند النجاح أو Exception عند الفشل
+     */
+    suspend fun getHistory(accessToken: String): Result<HistoryResponse> {
+        Log.i(TAG, "جاري استعلام سجل المعاملات...")
+        return try {
+            val responseJson = networkRouter.executeViaCellular(
+                "$apiBaseUrl/account/history",
+                null,
+                accessToken
+            )
+            val json = JSONObject(responseJson)
+            val transactionsArray = json.getJSONArray("transactions")
+            val transactions = mutableListOf<HistoryTransaction>()
+            for (i in 0 until transactionsArray.length()) {
+                val item = transactionsArray.getJSONObject(i)
+                transactions.add(
+                    HistoryTransaction(
+                        transactionId = item.getString("transactionId"),
+                        amount = item.getDouble("amount"),
+                        currency = item.getString("currency"),
+                        timestamp = item.getLong("timestamp"),
+                        status = item.getString("status")
+                    )
+                )
+            }
+            val historyResponse = HistoryResponse(
+                transactions = transactions,
+                totalCount = json.optInt("totalCount", transactions.size)
+            )
+            Log.i(TAG, "تم الحصول على سجل المعاملات بنجاح - العدد: ${historyResponse.totalCount}")
+            Result.success(historyResponse)
+        } catch (e: Exception) {
+            Log.e(TAG, "فشل استعلام سجل المعاملات: ${e.message}", e)
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * إجراء عملية شحن
+     *
+     * @param request بيانات طلب الشحن
+     * @param accessToken رمز المصادقة (Bearer Token)
+     * @return Result يحتوي على ChargeResponse عند النجاح أو Exception عند الفشل
+     */
+    suspend fun charge(request: ChargeRequest, accessToken: String): Result<ChargeResponse> {
+        Log.i(TAG, "جاري إجراء عملية شحن - المبلغ: ${request.amount} ${request.currency}")
+        return try {
+            val body = JSONObject().apply {
+                put("amount", request.amount)
+                put("currency", request.currency)
+                put("merchantId", request.merchantId)
+                if (request.description != null) put("description", request.description)
+            }.toString()
+            val responseJson = networkRouter.executeViaCellular(
+                "$apiBaseUrl/charge",
+                body,
+                accessToken
+            )
+            val json = JSONObject(responseJson)
+            val chargeResponse = ChargeResponse(
+                transactionId = json.getString("transactionId"),
+                status = json.getString("status"),
+                message = if (json.has("message")) json.getString("message") else null
+            )
+            Log.i(TAG, "تمت عملية الشحن بنجاح - معرف المعاملة: ${chargeResponse.transactionId}")
+            Result.success(chargeResponse)
+        } catch (e: Exception) {
+            Log.e(TAG, "فشل عملية الشحن: ${e.message}", e)
+            Result.failure(e)
+        }
     }
 
     /**
