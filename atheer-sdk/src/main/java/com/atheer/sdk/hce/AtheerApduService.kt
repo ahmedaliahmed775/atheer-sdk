@@ -3,12 +3,7 @@ package com.atheer.sdk.hce
 import android.nfc.cardemulation.HostApduService
 import android.os.Bundle
 import android.util.Log
-import com.atheer.sdk.security.AtheerKeystoreManager
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.launch
+import com.atheer.sdk.security.AtheerTokenManager
 
 /**
  * خدمة HCE (محاكاة البطاقة المضيفة) لـ Atheer SDK
@@ -20,12 +15,12 @@ import kotlinx.coroutines.launch
  * 1. يقترب الهاتف من جهاز نقطة البيع (POS)
  * 2. يُرسِل جهاز POS أمر APDU (SELECT AID) لاختيار التطبيق
  * 3. ترد هذه الخدمة بإشارة الموافقة (9000)
- * 4. يطلب POS بيانات الدفع بأوامر APDU متتالية
- * 5. تُرسِل الخدمة الرمز المميز المشفر بدلاً من بيانات البطاقة الحقيقية
+ * 4. يطلب POS بيانات الدفع بأمر GET DATA
+ * 5. تُرسِل الخدمة الرمز المميز التالي من خزنة الرموز غير المتصلة (Offline Token Vault)
  *
  * بروتوكول APDU (Application Protocol Data Unit):
  * - كل أمر APDU يتبع الهيكل: [CLA][INS][P1][P2][Lc][Data][Le]
- * - كل رد APDU ينتهي بكود الحالة: 9000 = نجاح، 6A82 = ملف غير موجود
+ * - كل رد APDU ينتهي بكود الحالة: 9000 = نجاح، 6A83 = لا توجد رموز، 6A82 = ملف غير موجود
  *
  * @see HostApduService الفئة الأصلية من Android
  */
@@ -33,13 +28,6 @@ class AtheerApduService : HostApduService() {
 
     companion object {
         private const val TAG = "AtheerApduService"
-
-        // AID الخاص بـ Atheer SDK (Application Identifier)
-        // يتطابق مع AID المُعرَّف في apduservice.xml
-        private val ATHEER_AID = byteArrayOf(
-            0xA0.toByte(), 0x00.toByte(), 0x00.toByte(), 0x00.toByte(),
-            0x03.toByte(), 0x10.toByte(), 0x10.toByte(), 0x01.toByte()
-        )
 
         // أوامر APDU المعروفة
         // أمر SELECT: يُستخدَم لاختيار التطبيق بواسطة AID
@@ -55,47 +43,20 @@ class AtheerApduService : HostApduService() {
         // 6A82 = الملف أو التطبيق غير موجود (File Not Found)
         private val APDU_FILE_NOT_FOUND = byteArrayOf(0x6A.toByte(), 0x82.toByte())
 
+        // 6A83 = لا توجد رموز مميزة متاحة (No Offline Tokens Available)
+        private val APDU_NO_TOKENS = byteArrayOf(0x6A.toByte(), 0x83.toByte())
+
         // 6F00 = خطأ غير معروف (Unknown Error)
         private val APDU_UNKNOWN_ERROR = byteArrayOf(0x6F.toByte(), 0x00.toByte())
     }
 
-    // مدير مخزن المفاتيح لتشفير بيانات الدفع
-    private lateinit var keystoreManager: AtheerKeystoreManager
-
-    // نطاق Coroutines المرتبط بدورة حياة الخدمة
-    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-
-    // بيانات الدفع المُعدَّة للإرسال (الرمز المميز)
-    // Volatile لضمان رؤية التغييرات عبر الخيوط المتعددة دون حالات تعارض
-    @Volatile
-    private var preparedPaymentToken: String? = null
+    // مدير خزنة الرموز المميزة غير المتصلة
+    private lateinit var tokenManager: AtheerTokenManager
 
     override fun onCreate() {
         super.onCreate()
         Log.i(TAG, "جاري تشغيل خدمة HCE لـ Atheer SDK...")
-        keystoreManager = AtheerKeystoreManager()
-    }
-
-    /**
-     * تهيئة بيانات الدفع قبل الاقتراب من جهاز POS
-     *
-     * يجب استدعاء هذه الدالة من التطبيق المضيف قبل إجراء عملية الدفع.
-     * تقوم بتشفير بيانات البطاقة وإعداد الرمز المميز الجاهز للإرسال عبر NFC.
-     *
-     * @param cardData بيانات البطاقة (رقم البطاقة أو بيانات المسار)
-     * @param amount قيمة المعاملة
-     * @param currency رمز العملة
-     */
-    fun preparePayment(cardData: String, amount: Long, currency: String) {
-        Log.d(TAG, "جاري تحضير بيانات الدفع للإرسال عبر NFC...")
-        serviceScope.launch {
-            // توليد Nonce لمنع هجمات إعادة التشغيل
-            val nonce = keystoreManager.generateNonce()
-            // تشفير بيانات الدفع مع الـ Nonce كجزء من البيانات
-            val paymentData = "$cardData|$amount|$currency|$nonce"
-            preparedPaymentToken = keystoreManager.tokenize(paymentData)
-            Log.i(TAG, "تم تحضير بيانات الدفع بنجاح - Nonce: ${nonce.take(8)}...")
-        }
+        tokenManager = AtheerTokenManager(applicationContext)
     }
 
     /**
@@ -106,7 +67,7 @@ class AtheerApduService : HostApduService() {
      *
      * منطق المعالجة:
      * - إذا كان الأمر SELECT → إرسال موافقة (9000)
-     * - إذا كان الأمر GET PAYMENT DATA → إرسال الرمز المميز المشفر + 9000
+     * - إذا كان الأمر GET PAYMENT DATA → استهلاك رمز من الخزنة وإرساله + 9000
      * - أي أمر آخر → إرسال خطأ (6A82)
      *
      * @param commandApdu بيانات أمر APDU الوارد من جهاز القارئ
@@ -173,19 +134,20 @@ class AtheerApduService : HostApduService() {
     }
 
     /**
-     * معالجة طلب بيانات الدفع وإرسال الرمز المميز
+     * معالجة طلب بيانات الدفع باستهلاك رمز مميز من الخزنة
      *
      * @return بيانات الرد تتضمن الرمز المميز المشفر + كود النجاح 9000
+     *         أو كود الخطأ 6A83 إذا لم تتوفر رموز
      */
     private fun handleGetPaymentData(): ByteArray {
-        val token = preparedPaymentToken
+        val token = tokenManager.consumeNextToken()
         return if (token != null) {
-            Log.i(TAG, "إرسال بيانات الدفع المشفرة عبر NFC...")
+            Log.i(TAG, "إرسال رمز مميز من الخزنة عبر NFC...")
             val tokenBytes = token.toByteArray(Charsets.UTF_8)
             tokenBytes + APDU_OK
         } else {
-            Log.w(TAG, "تحذير: لم يتم تحضير بيانات الدفع بعد")
-            APDU_FILE_NOT_FOUND
+            Log.w(TAG, "لا توجد رموز مميزة متاحة في الخزنة")
+            APDU_NO_TOKENS
         }
     }
 
@@ -206,16 +168,11 @@ class AtheerApduService : HostApduService() {
             else -> "سبب غير معروف: $reason"
         }
         Log.i(TAG, "تم إلغاء تفعيل خدمة HCE - السبب: $reasonText")
-        // مسح بيانات الدفع المؤقتة لضمان الأمان
-        preparedPaymentToken = null
     }
 
     override fun onDestroy() {
         super.onDestroy()
         Log.i(TAG, "إيقاف خدمة HCE لـ Atheer SDK")
-        // إلغاء جميع Coroutines المرتبطة بالخدمة
-        serviceScope.cancel()
-        preparedPaymentToken = null
     }
 
     /**

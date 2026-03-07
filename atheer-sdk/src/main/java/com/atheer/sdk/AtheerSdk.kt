@@ -5,17 +5,11 @@ import android.util.Log
 import com.atheer.sdk.database.AtheerDatabase
 import com.atheer.sdk.database.TransactionEntity
 import com.atheer.sdk.model.AtheerTransaction
-import com.atheer.sdk.model.BalanceResponse
 import com.atheer.sdk.model.ChargeRequest
 import com.atheer.sdk.model.ChargeResponse
-import com.atheer.sdk.model.HistoryResponse
-import com.atheer.sdk.model.HistoryTransaction
-import com.atheer.sdk.model.LoginRequest
-import com.atheer.sdk.model.LoginResponse
-import com.atheer.sdk.model.SignupRequest
-import com.atheer.sdk.model.SignupResponse
 import com.atheer.sdk.network.AtheerNetworkRouter
 import com.atheer.sdk.security.AtheerKeystoreManager
+import com.atheer.sdk.security.AtheerTokenManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -24,10 +18,16 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
 /**
- * الواجهة الرئيسية (Facade) لـ Atheer SDK
+ * الواجهة الرئيسية (Facade) لـ Atheer SDK — إضافة مدفوعات غير متصلة بدون واجهة (Headless)
  *
- * هذه الفئة هي نقطة الدخول الوحيدة للتطبيقات الخارجية للتفاعل مع المكتبة.
- * تطبق نمط Facade لإخفاء تعقيدات الطبقات الداخلية وتقديم واجهة بسيطة وموحدة.
+ * هذه الفئة هي نقطة الدخول الوحيدة للتطبيقات الخارجية (Host Apps) للتفاعل مع المكتبة.
+ * SDK لا يتعامل مع إدارة حسابات المستخدمين (تسجيل دخول/تسجيل/رصيد) —
+ * هذه مسؤولية التطبيق المضيف (Host Wallet App).
+ *
+ * المهام الرئيسية:
+ * - تزويد الرموز المميزة غير المتصلة (Offline Token Provisioning)
+ * - إجراء عمليات الشحن عبر الشبكة الخلوية
+ * - معالجة المعاملات وتخزينها محلياً للمزامنة
  *
  * نمط التهيئة:
  * ```kotlin
@@ -36,7 +36,8 @@ import org.json.JSONObject
  *
  * // استخدام SDK:
  * val sdk = AtheerSdk.getInstance()
- * sdk.processTransaction(transaction)
+ * sdk.provisionOfflineTokens(tokens)
+ * sdk.charge(request, accessToken)
  * ```
  *
  * المعمارية المطبقة: Clean Architecture
@@ -111,6 +112,7 @@ class AtheerSdk private constructor(
     private val keystoreManager: AtheerKeystoreManager = AtheerKeystoreManager()
     private val networkRouter: AtheerNetworkRouter = AtheerNetworkRouter(context)
     private val database: AtheerDatabase = AtheerDatabase.getInstance(context)
+    private val tokenManager: AtheerTokenManager = AtheerTokenManager(context)
 
     // نطاق Coroutines الخاص بـ SDK
     private val sdkScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -308,133 +310,25 @@ class AtheerSdk private constructor(
     }
 
     /**
-     * تسجيل الدخول والحصول على رمز المصادقة
+     * إجراء عملية شحن عبر الشبكة الخلوية
      *
-     * @param request بيانات تسجيل الدخول (اسم المستخدم وكلمة المرور)
-     * @return Result يحتوي على LoginResponse عند النجاح أو Exception عند الفشل
-     */
-    suspend fun login(request: LoginRequest): Result<LoginResponse> {
-        Log.i(TAG, "جاري تسجيل الدخول - المستخدم: ${request.username}")
-        return try {
-            val body = JSONObject().apply {
-                put("username", request.username)
-                put("password", request.password)
-            }.toString()
-            val responseJson = networkRouter.executeViaCellular("$apiBaseUrl/auth/login", body)
-            val json = JSONObject(responseJson)
-            val loginResponse = LoginResponse(
-                accessToken = json.getString("accessToken"),
-                tokenType = json.optString("tokenType", "Bearer"),
-                expiresIn = if (json.has("expiresIn")) json.getLong("expiresIn") else null
-            )
-            Log.i(TAG, "تم تسجيل الدخول بنجاح")
-            Result.success(loginResponse)
-        } catch (e: Exception) {
-            Log.e(TAG, "فشل تسجيل الدخول: ${e.message}", e)
-            Result.failure(e)
-        }
-    }
-
-    /**
-     * تسجيل مستخدم جديد
+     * يُرسِل الرمز المميز الذي التقطه جهاز POS إلى خادم Atheer
+     * باستخدام الشبكة الخلوية حصراً عبر AtheerNetworkRouter.
      *
-     * @param request بيانات التسجيل
-     * @return Result يحتوي على SignupResponse عند النجاح أو Exception عند الفشل
-     */
-    suspend fun signup(request: SignupRequest): Result<SignupResponse> {
-        Log.i(TAG, "جاري تسجيل مستخدم جديد - اسم المستخدم: ${request.username}")
-        return try {
-            val body = JSONObject().apply {
-                put("username", request.username)
-                put("password", request.password)
-                if (request.email != null) put("email", request.email)
-                if (request.phone != null) put("phone", request.phone)
-            }.toString()
-            val responseJson = networkRouter.executeViaCellular("$apiBaseUrl/auth/signup", body)
-            val json = JSONObject(responseJson)
-            val signupResponse = SignupResponse(
-                userId = json.getString("userId"),
-                message = if (json.has("message")) json.getString("message") else null
-            )
-            Log.i(TAG, "تم تسجيل المستخدم الجديد بنجاح - معرف المستخدم: ${signupResponse.userId}")
-            Result.success(signupResponse)
-        } catch (e: Exception) {
-            Log.e(TAG, "فشل تسجيل المستخدم: ${e.message}", e)
-            Result.failure(e)
-        }
-    }
-
-    /**
-     * استعلام عن رصيد الحساب
-     *
-     * @param accessToken رمز المصادقة (Bearer Token)
-     * @return Result يحتوي على BalanceResponse عند النجاح أو Exception عند الفشل
-     */
-    suspend fun getBalance(accessToken: String): Result<BalanceResponse> {
-        Log.i(TAG, "جاري استعلام الرصيد...")
-        return try {
-            val responseJson = networkRouter.executeViaCellular(
-                "$apiBaseUrl/account/balance",
-                null,
-                accessToken
-            )
-            val json = JSONObject(responseJson)
-            val balanceResponse = BalanceResponse(
-                balance = json.getDouble("balance"),
-                currency = json.getString("currency"),
-                accountId = if (json.has("accountId")) json.getString("accountId") else null
-            )
-            Log.i(TAG, "تم الحصول على الرصيد بنجاح: ${balanceResponse.balance} ${balanceResponse.currency}")
-            Result.success(balanceResponse)
-        } catch (e: Exception) {
-            Log.e(TAG, "فشل استعلام الرصيد: ${e.message}", e)
-            Result.failure(e)
-        }
-    }
-
-    /**
-     * استعلام عن سجل المعاملات
-     *
-     * @param accessToken رمز المصادقة (Bearer Token)
-     * @return Result يحتوي على HistoryResponse عند النجاح أو Exception عند الفشل
-     */
-    suspend fun getHistory(accessToken: String): Result<HistoryResponse> {
-        Log.i(TAG, "جاري استعلام سجل المعاملات...")
-        return try {
-            val responseJson = networkRouter.executeViaCellular(
-                "$apiBaseUrl/account/history",
-                null,
-                accessToken
-            )
-            val json = JSONObject(responseJson)
-            val transactionsArray = json.getJSONArray("transactions")
-            val transactions = mutableListOf<HistoryTransaction>()
-            for (i in 0 until transactionsArray.length()) {
-                val item = transactionsArray.getJSONObject(i)
-                transactions.add(
-                    HistoryTransaction(
-                        transactionId = item.getString("transactionId"),
-                        amount = item.getDouble("amount"),
-                        currency = item.getString("currency"),
-                        timestamp = item.getLong("timestamp"),
-                        status = item.getString("status")
-                    )
-                )
-            }
-            val historyResponse = HistoryResponse(
-                transactions = transactions,
-                totalCount = json.optInt("totalCount", transactions.size)
-            )
-            Log.i(TAG, "تم الحصول على سجل المعاملات بنجاح - العدد: ${historyResponse.totalCount}")
-            Result.success(historyResponse)
-        } catch (e: Exception) {
-            Log.e(TAG, "فشل استعلام سجل المعاملات: ${e.message}", e)
-            Result.failure(e)
-        }
-    }
-
-    /**
-     * إجراء عملية شحن
+     * هيكل JSON المُرسَل يتطابق مع خادم Atheer:
+     * ```json
+     * {
+     *   "header": {
+     *     "serviceDetail": { "serviceName": "ATHEER.ECOMMCASHOUT" }
+     *   },
+     *   "body": {
+     *     "amount": 500,
+     *     "atheerToken": "...",
+     *     "merchantId": "...",
+     *     "currency": "SAR"
+     *   }
+     * }
+     * ```
      *
      * @param request بيانات طلب الشحن
      * @param accessToken رمز المصادقة (Bearer Token)
@@ -443,11 +337,22 @@ class AtheerSdk private constructor(
     suspend fun charge(request: ChargeRequest, accessToken: String): Result<ChargeResponse> {
         Log.i(TAG, "جاري إجراء عملية شحن - المبلغ: ${request.amount} ${request.currency}")
         return try {
-            val body = JSONObject().apply {
+            val serviceDetail = JSONObject().apply {
+                put("serviceName", "ATHEER.ECOMMCASHOUT")
+            }
+            val header = JSONObject().apply {
+                put("serviceDetail", serviceDetail)
+            }
+            val bodyJson = JSONObject().apply {
                 put("amount", request.amount)
-                put("currency", request.currency)
+                put("atheerToken", request.atheerToken)
                 put("merchantId", request.merchantId)
+                put("currency", request.currency)
                 if (request.description != null) put("description", request.description)
+            }
+            val body = JSONObject().apply {
+                put("header", header)
+                put("body", bodyJson)
             }.toString()
             val responseJson = networkRouter.executeViaCellular(
                 "$apiBaseUrl/charge",
@@ -466,6 +371,30 @@ class AtheerSdk private constructor(
             Log.e(TAG, "فشل عملية الشحن: ${e.message}", e)
             Result.failure(e)
         }
+    }
+
+    // ==================== خزنة الرموز المميزة غير المتصلة ====================
+
+    /**
+     * تزويد خزنة الرموز بقائمة من الرموز المميزة المشفرة
+     *
+     * يجب استدعاء هذه الدالة من التطبيق المضيف عند الاتصال بالإنترنت
+     * لتخزين الرموز المميزة للاستخدام في وضع الدفع غير المتصل عبر NFC.
+     *
+     * @param tokens قائمة الرموز المميزة المشفرة
+     */
+    fun provisionOfflineTokens(tokens: List<String>) {
+        Log.i(TAG, "جاري تزويد ${tokens.size} رمز مميز غير متصل...")
+        tokenManager.provisionTokens(tokens)
+    }
+
+    /**
+     * الحصول على عدد الرموز المميزة المتبقية في الخزنة
+     *
+     * @return عدد الرموز المتبقية للاستخدام في الوضع غير المتصل
+     */
+    fun getRemainingTokensCount(): Int {
+        return tokenManager.getTokensCount()
     }
 
     /**
