@@ -365,26 +365,37 @@ suspend fun charge(request: ChargeRequest, accessToken: String): Result<ChargeRe
                 accessToken
             )
             
-            // 3. تحليل الاستجابة وفق هيكل السيرفر (Root -> data)
-            val rootJson = JSONObject(responseJson)
-            val isSuccess = rootJson.optBoolean("success", false)
-            val message = rootJson.optString("message", "")
 
-            if (!isSuccess) {
-                throw Exception("فشلت العملية من الخادم: $message")
+            val rootJson = JSONObject(responseJson)
+            
+            // التحقق مما إذا كان الرد يحمل الهيكل البنكي (header و body)
+            if (rootJson.has("header") && rootJson.has("body")) {
+                val headerJson = rootJson.getJSONObject("header").getJSONObject("serviceDetail")
+                val bodyJson = rootJson.getJSONObject("body")
+
+                val responseCode = headerJson.optString("responseCode", "99")
+                
+                // 00 تعني قبول العملية في السيرفر
+                if (responseCode == "00") {
+                    val chargeResponse = ChargeResponse(
+                        transactionId = bodyJson.getString("transactionId"),
+                        status = bodyJson.getString("status"),
+                        message = headerJson.optString("responseMessage", "SUCCESS")
+                    )
+                    Log.i(TAG, "تمت عملية الشحن بنجاح - معرف المعاملة: ${chargeResponse.transactionId}")
+                    return Result.success(chargeResponse)
+                } else {
+                    // في حالة الرفض البنكي
+                    val errorMessage = bodyJson.optString("message", "تم رفض العملية من الخادم")
+                    throw Exception(errorMessage)
+                }
+            } else {
+                // معالجة أخطاء السيرفر المباشرة (مثل 400 أو 500 التي لا تحتوي على header)
+                val isSuccess = rootJson.optBoolean("success", false)
+                val message = rootJson.optString("message", "خطأ غير معروف من الخادم")
+                throw Exception(message)
             }
 
-            // استخراج البيانات من كائن data
-            val dataJson = rootJson.getJSONObject("data")
-            
-            val chargeResponse = ChargeResponse(
-                transactionId = dataJson.getString("transactionId"),
-                status = "SUCCESS", 
-                message = message
-            )
-            Log.i(TAG, "تمت عملية الشحن بنجاح - معرف المعاملة: ${chargeResponse.transactionId}")
-            Result.success(chargeResponse)
-            
         } catch (e: Exception) {
             Log.e(TAG, "فشل عملية الشحن: ${e.message}", e)
             Result.failure(e)
