@@ -25,7 +25,7 @@ class AtheerTokenManager(context: Context) {
         private const val TAG = "AtheerTokenManager"
         private const val PREFS_NAME = "atheer_token_vault"
         private const val KEY_TOKENS = "offline_tokens"
-        private const val TOKEN_SEPARATOR = "\u001F" // Unit Separator (non-printable)
+        private const val TOKEN_SEPARATOR = "\u001F" // Unit Separator - safe for encrypted/base64 tokens
     }
 
     private val prefs: SharedPreferences =
@@ -93,7 +93,7 @@ class AtheerTokenManager(context: Context) {
     private fun loadTokens(): List<String> {
         val raw = prefs.getString(KEY_TOKENS, null) ?: return emptyList()
         if (raw.isEmpty()) return emptyList()
-        return raw.split(TOKEN_SEPARATOR)
+        return raw.split(TOKEN_SEPARATOR).filter { it.isNotEmpty() }
     }
 
     /**
