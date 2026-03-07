@@ -334,9 +334,12 @@ class AtheerSdk private constructor(
      * @param accessToken رمز المصادقة (Bearer Token)
      * @return Result يحتوي على ChargeResponse عند النجاح أو Exception عند الفشل
      */
-    suspend fun charge(request: ChargeRequest, accessToken: String): Result<ChargeResponse> {
+suspend fun charge(request: ChargeRequest, accessToken: String): Result<ChargeResponse> {
         Log.i(TAG, "جاري إجراء عملية شحن - المبلغ: ${request.amount} ${request.currency}")
         return try {
+            // 1. توليد Nonce الذي يتطلبه السيرفر
+            val generatedNonce = keystoreManager.generateNonce()
+
             val serviceDetail = JSONObject().apply {
                 put("serviceName", "ATHEER.ECOMMCASHOUT")
             }
@@ -346,27 +349,42 @@ class AtheerSdk private constructor(
             val bodyJson = JSONObject().apply {
                 put("amount", request.amount)
                 put("atheerToken", request.atheerToken)
+                put("nonce", generatedNonce) // <--- إضافة Nonce هنا
                 put("merchantId", request.merchantId)
                 put("currency", request.currency)
-                if (request.description != null) put("description", request.description)
             }
             val body = JSONObject().apply {
                 put("header", header)
                 put("body", bodyJson)
             }.toString()
+
+            // 2. توجيه الطلب للمسار الصحيح (merchant/charge)
             val responseJson = networkRouter.executeViaCellular(
-                "$apiBaseUrl/charge",
+                "$apiBaseUrl/merchant/charge",
                 body,
                 accessToken
             )
-            val json = JSONObject(responseJson)
+            
+            // 3. تحليل الاستجابة وفق هيكل السيرفر (Root -> data)
+            val rootJson = JSONObject(responseJson)
+            val isSuccess = rootJson.optBoolean("success", false)
+            val message = rootJson.optString("message", "")
+
+            if (!isSuccess) {
+                throw Exception("فشلت العملية من الخادم: $message")
+            }
+
+            // استخراج البيانات من كائن data
+            val dataJson = rootJson.getJSONObject("data")
+            
             val chargeResponse = ChargeResponse(
-                transactionId = json.getString("transactionId"),
-                status = json.getString("status"),
-                message = if (json.has("message")) json.getString("message") else null
+                transactionId = dataJson.getString("transactionId"),
+                status = "SUCCESS", 
+                message = message
             )
             Log.i(TAG, "تمت عملية الشحن بنجاح - معرف المعاملة: ${chargeResponse.transactionId}")
             Result.success(chargeResponse)
+            
         } catch (e: Exception) {
             Log.e(TAG, "فشل عملية الشحن: ${e.message}", e)
             Result.failure(e)
