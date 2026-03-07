@@ -1,53 +1,43 @@
-name: Build SDK AAR
+name: Publish Atheer SDK to GitHub Packages
 
+# متى يعمل هذا السكربت؟
 on:
   push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
-  workflow_dispatch: # يسمح لك بتشغيل البناء يدوياً بضغطة زر
-
-permissions:
-  contents: read
+    branches:
+      - main # إذا كان الفرع الأساسي لديك اسمه master، قم بتغيير هذه الكلمة إلى master
 
 jobs:
-  build:
+  publish:
+    name: Build and Publish
     runs-on: ubuntu-latest
 
+    # إعطاء الصلاحيات اللازمة لـ GitHub Token لكي يتمكن من رفع الحزمة
+    permissions:
+      contents: read
+      packages: write 
+
     steps:
-      - name: Checkout code
+      # 1. جلب الكود المصدري
+      - name: Checkout Code
         uses: actions/checkout@v4
 
+      # 2. تجهيز بيئة الجافا (JDK 17) المتوافقة مع مشروعك
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
+          cache: gradle # تفعيل الكاش لتسريع عملية البناء في المرات القادمة
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Cache Gradle packages
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle.kts', 'gradle/wrapper/gradle-wrapper.properties') }}
-          restore-keys: |
-            ${{ runner.os }}-gradle-
-
-      - name: Grant execute permission for gradlew
+      # 3. إعطاء صلاحية التشغيل لملف Gradle
+      - name: Make gradlew executable
         run: chmod +x gradlew
 
-      # هذا هو السطر الأهم: أمر بناء مكتبة SDK
-      - name: Build Release AAR
-        run: ./gradlew :atheer-sdk:assembleRelease
-
-      # حفظ ملف AAR لكي تتمكن من تحميله
-      - name: Upload AAR Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: atheer-sdk-release-aar
-          path: atheer-sdk/build/outputs/aar/atheer-sdk-release.aar
-          retention-days: 90
+      # 4. بناء المكتبة ونشرها إلى GitHub Packages
+      - name: Build and Publish to GitHub Packages
+        # هذا الأمر ينفذ مهمة النشر التي أضفناها في build.gradle.kts
+        run: ./gradlew :atheer-sdk:publishReleasePublicationToGitHubPackagesRepository
+        env:
+          # تمرير المتغيرات البيئية التي يحتاجها بلوك repositories في build.gradle.kts
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
