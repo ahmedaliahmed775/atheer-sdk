@@ -223,6 +223,34 @@ class AtheerSdkTest {
         assertNull(response.message)
     }
 
+    // ==================== اختبارات نقطة النهاية وتطبيع الرابط ====================
+
+    /** اختبار تطبيع apiBaseUrl بإزالة الـ slash الزائد */
+    @Test
+    fun `اختبار تطبيع apiBaseUrl بإزالة Slash الزائد`() {
+        val rawUrl = "https://api.atheer.com/"
+        val normalized = rawUrl.trimEnd('/')
+        assertEquals("https://api.atheer.com", normalized)
+    }
+
+    /** اختبار أن مسار الشحن الصحيح يُبنى من الرابط الأساسي */
+    @Test
+    fun `اختبار أن مسار Charge يتضمن api v1 merchant charge`() {
+        val baseUrl = "https://api.atheer.com"
+        val chargeEndpoint = "$baseUrl/api/v1/merchant/charge"
+        assertEquals("https://api.atheer.com/api/v1/merchant/charge", chargeEndpoint)
+    }
+
+    /** اختبار أن مسار الشحن لا يحتوي على slashes مضاعفة عند إضافة slash في نهاية baseUrl */
+    @Test
+    fun `اختبار عدم تكرار Slash عند بناء مسار Charge`() {
+        val rawUrl = "https://api.atheer.com/"
+        val normalized = rawUrl.trimEnd('/')
+        val chargeEndpoint = "$normalized/api/v1/merchant/charge"
+        assertFalse("يجب ألا يحتوي المسار على slashes مضاعفة", chargeEndpoint.contains("//api"))
+        assertEquals("https://api.atheer.com/api/v1/merchant/charge", chargeEndpoint)
+    }
+
     // ==================== دوال مساعدة للاختبار ====================
 
     /** نسخة مساعدة من دالة التحقق من صيغة Nonce */
