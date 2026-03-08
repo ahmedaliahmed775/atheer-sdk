@@ -40,6 +40,14 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+
+    // إضافة هذا البلوك ضرورية في إصدارات AGP الحديثة لإخبار الأندرويد بتجهيز مكون النشر
+    publishing {
+        singleVariant("release") {
+            withSourcesJar()
+            withJavadocJar()
+        }
+    }
 }
 
 dependencies {
@@ -59,20 +67,20 @@ dependencies {
     testImplementation("org.mockito:mockito-core:5.11.0")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
 }
+
 // ==========================================
-// كود النشراً
+// كود النشر
 // ==========================================
 afterEvaluate {
     publishing {
         publications {
-            register<MavenPublication>("release") {
+            create<MavenPublication>("release") {
+                // جلب المكون الذي تم تجهيزه داخل بلوك android
+                from(components["release"])
+                
                 groupId = "com.github.ahmedaliahmed775" 
                 artifactId = "atheer-sdk"
                 version = "1.0.0"
-
-                afterEvaluate {
-                    from(components["release"])
-                }
             }
         }
         
