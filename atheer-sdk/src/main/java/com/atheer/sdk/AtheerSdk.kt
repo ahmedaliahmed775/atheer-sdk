@@ -48,8 +48,9 @@ import org.json.JSONObject
 class AtheerSdk private constructor(
     private val context: Context,
     private val merchantId: String,
-    private val apiBaseUrl: String
+    apiBaseUrl: String
 ) {
+    private val apiBaseUrl: String = apiBaseUrl.trimEnd('/')
 
     companion object {
         private const val TAG = "AtheerSdk"
@@ -358,9 +359,9 @@ suspend fun charge(request: ChargeRequest, accessToken: String): Result<ChargeRe
                 put("body", bodyJson)
             }.toString()
 
-            // 2. توجيه الطلب للمسار الصحيح (merchant/charge)
+            // 2. توجيه الطلب للمسار الصحيح (api/v1/merchant/charge)
             val responseJson = networkRouter.executeViaCellular(
-                "$apiBaseUrl/merchant/charge",
+                "$apiBaseUrl/api/v1/merchant/charge",
                 body,
                 accessToken
             )
