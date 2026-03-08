@@ -82,7 +82,7 @@ afterEvaluate {
                 
                 groupId = "com.github.ahmedaliahmed775" 
                 artifactId = "atheer-sdk"
-                version = "1.0.0"
+                version = System.getenv("SDK_VERSION") ?: "1.0.0"
             }
         }
         
