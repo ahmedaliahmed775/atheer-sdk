@@ -14,7 +14,7 @@
     android:requireDeviceUnlock="false">
 
     <aid-group
-        android:category="payment"
+        android:category="other"
         android:description="@string/atheer_payment_description">
 
         <!-- معرف تطبيق الدفع الخاص بـ Atheer SDK -->
