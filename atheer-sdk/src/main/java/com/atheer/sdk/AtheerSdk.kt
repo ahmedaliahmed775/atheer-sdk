@@ -32,11 +32,11 @@ import org.json.JSONObject
  * نمط التهيئة:
  * ```kotlin
  * // في Application.onCreate():
- * AtheerSdk.init(context, "MERCHANT_ID_123", "https://api.atheer.com")
+ * AtheerSdk.init(context, "MERCHANT_ID_123", "[https://api.atheer.com](https://api.atheer.com)")
  *
  * // استخدام SDK:
  * val sdk = AtheerSdk.getInstance()
- * sdk.provisionOfflineTokens(tokens)
+ * sdk.fetchAndProvisionTokens(accessToken) // لجلب الرموز من السيرفر
  * sdk.charge(request, accessToken)
  * ```
  *
@@ -316,26 +316,11 @@ class AtheerSdk private constructor(
      * يُرسِل الرمز المميز الذي التقطه جهاز POS إلى خادم Atheer
      * باستخدام الشبكة الخلوية حصراً عبر AtheerNetworkRouter.
      *
-     * هيكل JSON المُرسَل يتطابق مع خادم Atheer:
-     * ```json
-     * {
-     *   "header": {
-     *     "serviceDetail": { "serviceName": "ATHEER.ECOMMCASHOUT" }
-     *   },
-     *   "body": {
-     *     "amount": 500,
-     *     "atheerToken": "...",
-     *     "merchantId": "...",
-     *     "currency": "SAR"
-     *   }
-     * }
-     * ```
-     *
      * @param request بيانات طلب الشحن
      * @param accessToken رمز المصادقة (Bearer Token)
      * @return Result يحتوي على ChargeResponse عند النجاح أو Exception عند الفشل
      */
-suspend fun charge(request: ChargeRequest, accessToken: String): Result<ChargeResponse> {
+    suspend fun charge(request: ChargeRequest, accessToken: String): Result<ChargeResponse> {
         Log.i(TAG, "جاري إجراء عملية شحن - المبلغ: ${request.amount} ${request.currency}")
         return try {
             // 1. توليد Nonce الذي يتطلبه السيرفر
@@ -366,7 +351,6 @@ suspend fun charge(request: ChargeRequest, accessToken: String): Result<ChargeRe
                 accessToken
             )
             
-
             val rootJson = JSONObject(responseJson)
             
             // التحقق مما إذا كان الرد يحمل الهيكل البنكي (header و body)
@@ -392,7 +376,6 @@ suspend fun charge(request: ChargeRequest, accessToken: String): Result<ChargeRe
                 }
             } else {
                 // معالجة أخطاء السيرفر المباشرة (مثل 400 أو 500 التي لا تحتوي على header)
-                val isSuccess = rootJson.optBoolean("success", false)
                 val message = rootJson.optString("message", "خطأ غير معروف من الخادم")
                 throw Exception(message)
             }
@@ -404,6 +387,33 @@ suspend fun charge(request: ChargeRequest, accessToken: String): Result<ChargeRe
     }
 
     // ==================== خزنة الرموز المميزة غير المتصلة ====================
+
+    /**
+     * جلب مفاتيح الدفع غير المتصلة (Offline Tokens) من السيرفر وتخزينها محلياً
+     *
+     * @param authToken رمز المصادقة (Bearer Token) الخاص بالعميل
+     * @return Result يحتوي على عدد المفاتيح المتاحة بعد التحديث، أو خطأ في حالة الفشل
+     */
+    suspend fun fetchAndProvisionTokens(authToken: String): Result<Int> {
+        return try {
+            // استخدام الموجه لجلب التوكنز من السيرفر (مع تمرير رابط السيرفر الأساسي)
+            val networkResult = networkRouter.fetchOfflineTokens(apiBaseUrl, authToken)
+            
+            if (networkResult.isSuccess) {
+                val tokens = networkResult.getOrThrow()
+                
+                // تخزين المفاتيح في الخزنة المشفرة
+                provisionOfflineTokens(tokens)
+                
+                // إرجاع العدد المتبقي
+                Result.success(getRemainingTokensCount())
+            } else {
+                Result.failure(networkResult.exceptionOrNull() ?: Exception("خطأ غير معروف أثناء جلب المفاتيح"))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
 
     /**
      * تزويد خزنة الرموز بقائمة من الرموز المميزة المشفرة
