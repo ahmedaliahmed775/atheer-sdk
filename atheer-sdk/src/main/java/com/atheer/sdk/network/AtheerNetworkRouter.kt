@@ -13,6 +13,12 @@ import java.net.URL
 import javax.net.ssl.HttpsURLConnection
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
+// أضف هذه الاستيرادات في أعلى الملف إذا لم تكن موجودة
+import com.google.gson.Gson
+import com.atheer.sdk.model.TokensResponse
+
+    // ... (باقي كود الكلاس كما هو) ...
+
 
 /**
  * موجه الشبكة لـ Atheer SDK
@@ -220,4 +226,37 @@ class AtheerNetworkRouter(private val context: Context) {
         val capabilities = connectivityManager.getNetworkCapabilities(network) ?: return false
         return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
     }
+
+    /**
+     * جلب مفاتيح الدفع غير المتصلة (Offline Tokens) من السيرفر
+     * يتم التوجيه عبر الشبكة الخلوية باستخدام دالة executeViaCellular
+     */
+    suspend fun fetchOfflineTokens(apiBaseUrl: String, authToken: String): Result<List<String>> {
+        return try {
+            val url = "$apiBaseUrl/api/v1/wallet/offline-tokens"
+            
+            // 1. استخدام الدالة الموجودة لديك في نفس الكلاس لتنفيذ الاتصال
+            // نمرر requestBody كـ null لأن الطلب GET
+            val responseStr = executeViaCellular(
+                urlString = url,
+                requestBody = null, 
+                accessToken = authToken
+            )
+            
+            // 2. فك تشفير استجابة JSON
+            val gson = Gson()
+            val response = gson.fromJson(responseStr, TokensResponse::class.java)
+            
+            // 3. التحقق من نجاح العملية واستخراج التوكنز
+            if (response != null && response.success && response.data?.tokens != null) {
+                Result.success(response.data.tokens)
+            } else {
+                Result.failure(Exception("فشل في جلب مفاتيح الدفع من السيرفر"))
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "خطأ أثناء جلب مفاتيح الدفع: ${e.message}")
+            Result.failure(e)
+        }
+    }
 }
+
