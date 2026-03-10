@@ -345,7 +345,9 @@ class AtheerSdk private constructor(
             }.toString()
 
             // 2. توجيه الطلب للمسار الصحيح (api/v1/merchant/charge)
-            val responseJson = networkRouter.executeViaCellular(
+            // 2. توجيه الطلب للمسار الصحيح (api/v1/merchant/charge)
+            // 🌟 التعديل هنا: استخدام executeStandard بدلاً من executeViaCellular
+            val responseJson = networkRouter.executeStandard(
                 "$apiBaseUrl/api/v1/merchant/charge",
                 body,
                 accessToken
@@ -394,17 +396,25 @@ class AtheerSdk private constructor(
      * @param authToken رمز المصادقة (Bearer Token) الخاص بالعميل
      * @return Result يحتوي على عدد المفاتيح المتاحة بعد التحديث، أو خطأ في حالة الفشل
      */
-    suspend fun fetchAndProvisionTokens(authToken: String): Result<Int> {
+    /**
+     * جلب مفاتيح الدفع غير المتصلة (Offline Tokens) من السيرفر وتخزينها محلياً
+     *
+     * @param authToken رمز المصادقة (Bearer Token) الخاص بالعميل
+     * @param count عدد التوكنات المطلوبة
+     * @param limit سقف الدفع لكل توكن بالريال
+     * @return Result يحتوي على عدد المفاتيح المتاحة بعد التحديث، أو خطأ في حالة الفشل
+     */
+    suspend fun fetchAndProvisionTokens(authToken: String, count: Int, limit: Long): Result<Int> {
         return try {
-            // استخدام الموجه لجلب التوكنز من السيرفر (مع تمرير رابط السيرفر الأساسي)
-            val networkResult = networkRouter.fetchOfflineTokens(apiBaseUrl, authToken)
-            
+            // تمرير count و limit إلى موجه الشبكة
+            val networkResult = networkRouter.fetchOfflineTokens(apiBaseUrl, authToken, count, limit)
+
             if (networkResult.isSuccess) {
                 val tokens = networkResult.getOrThrow()
-                
+
                 // تخزين المفاتيح في الخزنة المشفرة
                 provisionOfflineTokens(tokens)
-                
+
                 // إرجاع العدد المتبقي
                 Result.success(getRemainingTokensCount())
             } else {

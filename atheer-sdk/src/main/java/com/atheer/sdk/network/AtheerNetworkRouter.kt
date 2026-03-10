@@ -6,48 +6,29 @@ import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.util.Log
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.IOException
 import java.net.URL
 import javax.net.ssl.HttpsURLConnection
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
-// أضف هذه الاستيرادات في أعلى الملف إذا لم تكن موجودة
 import com.google.gson.Gson
 import com.atheer.sdk.model.TokensResponse
-
-    // ... (باقي كود الكلاس كما هو) ...
-
 
 /**
  * موجه الشبكة لـ Atheer SDK
  *
- * تتولى هذه الفئة توجيه طلبات HTTP بشكل مباشر عبر شبكة البيانات الخلوية (4G/5G)
- * حتى لو كان الجهاز متصلاً بشبكة Wi-Fi. هذا المفهوم يُعرَف بـ "Zero-Rating Simulation"
- * أو توجيه حركة المرور المميزة (Privileged Traffic Routing).
- *
- * حالات الاستخدام:
- * - **Zero-Rating**: توجيه طلبات الدفع عبر شبكة الجوال المخصصة التي قد تكون
- *   معفاة من رسوم البيانات (Zero-Rated) من قِبَل شركة الاتصالات
- * - **الموثوقية**: في بعض البيئات، الشبكة الخلوية أكثر موثوقية من Wi-Fi للمدفوعات
- * - **الأمان**: تجنب شبكات Wi-Fi العامة غير الآمنة للمعاملات المالية
- *
- * ملاحظة تقنية:
- * يتطلب هذا النهج صلاحية CHANGE_NETWORK_STATE في الأجهزة القديمة،
- * أما في Android 10+ فيتم باستخدام bindProcessToNetwork
- *
- * @param context سياق التطبيق للوصول إلى ConnectivityManager
+ * تتولى هذه الفئة توجيه طلبات HTTP. تدعم التوجيه عبر الشبكة الخلوية حصراً للعمليات المالية،
+ * والتوجيه القياسي (Standard) للعمليات العامة مثل جلب الرموز وعمليات التاجر
  */
 class AtheerNetworkRouter(private val context: Context) {
 
     companion object {
         private const val TAG = "AtheerNetworkRouter"
-
-        // مهلة انتظار الاتصال بالشبكة الخلوية بالميلي ثانية
         private const val CELLULAR_NETWORK_TIMEOUT_MS = 10_000L
-
-        // مهلة انتظار الطلب الكامل بالميلي ثانية
         private const val REQUEST_TIMEOUT_MS = 30_000L
     }
 
@@ -55,116 +36,17 @@ class AtheerNetworkRouter(private val context: Context) {
         context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
 
     /**
-     * تنفيذ طلب HTTP عبر شبكة البيانات الخلوية حصراً
-     *
-     * الخطوات:
-     * 1. طلب شبكة خلوية من ConnectivityManager
-     * 2. انتظار توفر الشبكة الخلوية
-     * 3. ربط مؤقت للعملية بالشبكة الخلوية
-     * 4. تنفيذ الطلب
-     * 5. إلغاء ربط العملية بالشبكة الخلوية بعد الانتهاء
-     *
-     * @param urlString رابط الخادم المراد الاتصال به
-     * @param requestBody جسم الطلب (JSON أو أي صيغة أخرى) - null لطلبات GET
-     * @param accessToken رمز المصادقة (Bearer Token) - اختياري، يُضاف كـ Authorization Header إن وُجد
-     * @return محتوى الاستجابة كنص
-     * @throws IOException في حالة فشل الاتصال أو الطلب
+     * تنفيذ طلب HTTP عبر الشبكة الافتراضية للجهاز (Wi-Fi أو بيانات).
+     * يُستخدم هذا المسار للسماح للعملاء بجلب الرموز ולلتاجر بإجراء العمليات دون الحاجة لفرض بيانات الهاتف.
      */
-    suspend fun executeViaCellular(
+    suspend fun executeStandard(
         urlString: String,
         requestBody: String? = null,
         accessToken: String? = null
-    ): String {
-        Log.d(TAG, "جاري توجيه الطلب عبر الشبكة الخلوية: $urlString")
-
-        // الحصول على شبكة خلوية نشطة أو انتظار توفرها
-        val cellularNetwork = withTimeoutOrNull(CELLULAR_NETWORK_TIMEOUT_MS) {
-            getCellularNetwork()
-        } ?: throw IOException("تعذر الوصول إلى شبكة البيانات الخلوية في الوقت المحدد")
-
-        Log.i(TAG, "تم الحصول على الشبكة الخلوية بنجاح - جاري إرسال الطلب...")
-
-        return withTimeoutOrNull(REQUEST_TIMEOUT_MS) {
-            executeOnNetwork(cellularNetwork, urlString, requestBody, accessToken)
-        } ?: throw IOException("انتهت مهلة انتظار الطلب")
-    }
-
-    /**
-     * الانتظار حتى توفر شبكة خلوية نشطة
-     *
-     * تستخدم هذه الدالة NetworkCallback للاستماع لأحداث الشبكة بشكل غير متزامن
-     * وإعادة الشبكة فور توفرها، وذلك باستخدام suspendCancellableCoroutine
-     * لتحويل الاستماع التقليدي (Callback) إلى أسلوب Coroutines.
-     *
-     * @return كائن Network يمثل الشبكة الخلوية النشطة
-     */
-    private suspend fun getCellularNetwork(): Network = suspendCancellableCoroutine { continuation ->
-        // تحديد الشبكة المطلوبة: شبكة خلوية قادرة على الاتصال بالإنترنت
-        val networkRequest = NetworkRequest.Builder()
-            .addTransportType(NetworkCapabilities.TRANSPORT_CELLULAR)
-            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-            .build()
-
-        val callback = object : ConnectivityManager.NetworkCallback() {
-            override fun onAvailable(network: Network) {
-                Log.i(TAG, "الشبكة الخلوية متاحة الآن")
-                // إلغاء تسجيل الاستماع بعد الحصول على الشبكة لتوفير البطارية
-                connectivityManager.unregisterNetworkCallback(this)
-                if (continuation.isActive) {
-                    continuation.resume(network)
-                }
-            }
-
-            override fun onUnavailable() {
-                Log.w(TAG, "الشبكة الخلوية غير متاحة")
-                if (continuation.isActive) {
-                    continuation.resumeWithException(
-                        IOException("الشبكة الخلوية غير متاحة على هذا الجهاز")
-                    )
-                }
-            }
-        }
-
-        // التحقق أولاً من وجود شبكة خلوية نشطة قبل الانتظار
-        val activeNetwork = connectivityManager.activeNetwork
-        val capabilities = connectivityManager.getNetworkCapabilities(activeNetwork)
-        // إذا كانت القدرات تشمل النقل الخلوي، فالشبكة متاحة - activeNetwork مضمونة غير فارغة هنا
-        if (activeNetwork != null && capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true) {
-            Log.d(TAG, "الشبكة الخلوية نشطة بالفعل")
-            continuation.resume(activeNetwork)
-            return@suspendCancellableCoroutine
-        }
-
-        // طلب شبكة خلوية من النظام
-        connectivityManager.requestNetwork(networkRequest, callback)
-
-        // إلغاء طلب الشبكة عند إلغاء Coroutine لمنع تسرب الموارد
-        continuation.invokeOnCancellation {
-            connectivityManager.unregisterNetworkCallback(callback)
-        }
-    }
-
-    /**
-     * تنفيذ طلب HTTP على شبكة محددة
-     *
-     * يستخدم هذا الأسلوب network.socketFactory لفرض استخدام الشبكة المحددة
-     * بدلاً من اتصال الجهاز الافتراضي. هذا هو المحور الرئيسي لآلية التوجيه.
-     *
-     * @param network الشبكة المحددة لتنفيذ الطلب عليها
-     * @param urlString رابط الخادم
-     * @param requestBody جسم الطلب أو null لطلبات GET
-     * @param accessToken رمز المصادقة (Bearer Token) - اختياري
-     * @return محتوى الاستجابة
-     */
-    private fun executeOnNetwork(
-        network: Network,
-        urlString: String,
-        requestBody: String?,
-        accessToken: String? = null
-    ): String {
-        Log.d(TAG, "جاري تنفيذ الطلب على الشبكة الخلوية: $urlString")
+    ): String = withContext(Dispatchers.IO) {
+        Log.d(TAG, "جاري تنفيذ طلب قياسي (عبر أي شبكة متاحة): $urlString")
         val url = URL(urlString)
-        val connection = network.openConnection(url) as HttpsURLConnection
+        val connection = url.openConnection() as HttpsURLConnection
 
         try {
             connection.apply {
@@ -172,9 +54,8 @@ class AtheerNetworkRouter(private val context: Context) {
                 readTimeout = 15_000
                 setRequestProperty("Content-Type", "application/json; charset=UTF-8")
                 setRequestProperty("Accept", "application/json")
-                setRequestProperty("X-Atheer-Source", "cellular")
+                setRequestProperty("X-Atheer-Source", "standard")
 
-                // إضافة Authorization Header إذا كان التوكن موجوداً
                 if (accessToken != null) {
                     setRequestProperty("Authorization", "Bearer $accessToken")
                 }
@@ -191,36 +72,105 @@ class AtheerNetworkRouter(private val context: Context) {
             }
 
             val responseCode = connection.responseCode
-            Log.d(TAG, "كود الاستجابة: $responseCode")
-
-            return if (responseCode in 200..299) {
+            if (responseCode in 200..299) {
                 connection.inputStream.bufferedReader().use { it.readText() }
             } else {
                 val errorBody = connection.errorStream?.bufferedReader()?.use { it.readText() } ?: ""
-                throw IOException("فشل الطلب - كود الاستجابة: $responseCode - $errorBody")
+                throw IOException("فشل الطلب القياسي - كود: $responseCode - $errorBody")
             }
         } finally {
             connection.disconnect()
-            Log.d(TAG, "تم إغلاق اتصال الشبكة الخلوية")
         }
     }
 
     /**
-     * التحقق من توفر الشبكة الخلوية على الجهاز
-     *
-     * @return true إذا كانت الشبكة الخلوية متاحة
+     * تنفيذ طلب HTTP عبر شبكة البيانات الخلوية حصراً.
      */
-    fun isCellularAvailable(): Boolean {
-        val network = connectivityManager.activeNetwork ?: return false
-        val capabilities = connectivityManager.getNetworkCapabilities(network) ?: return false
-        return capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)
+    suspend fun executeViaCellular(
+        urlString: String,
+        requestBody: String? = null,
+        accessToken: String? = null
+    ): String = withContext(Dispatchers.IO) {
+        Log.d(TAG, "جاري توجيه الطلب عبر الشبكة الخلوية حصراً: $urlString")
+
+        val cellularNetwork = withTimeoutOrNull(CELLULAR_NETWORK_TIMEOUT_MS) {
+            getCellularNetwork()
+        } ?: throw IOException("تعذر الوصول إلى شبكة البيانات الخلوية في الوقت المحدد")
+
+        return@withContext withTimeoutOrNull(REQUEST_TIMEOUT_MS) {
+            executeOnNetwork(cellularNetwork, urlString, requestBody, accessToken)
+        } ?: throw IOException("انتهت مهلة انتظار الطلب الخلوي")
     }
 
-    /**
-     * التحقق من توفر أي اتصال بالشبكة (خلوية أو Wi-Fi)
-     *
-     * @return true إذا كان الجهاز متصلاً بأي شبكة
-     */
+    private suspend fun getCellularNetwork(): Network = suspendCancellableCoroutine { continuation ->
+        val networkRequest = NetworkRequest.Builder()
+            .addTransportType(NetworkCapabilities.TRANSPORT_CELLULAR)
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .build()
+
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                connectivityManager.unregisterNetworkCallback(this)
+                if (continuation.isActive) continuation.resume(network)
+            }
+
+            override fun onUnavailable() {
+                if (continuation.isActive) {
+                    continuation.resumeWithException(IOException("الشبكة الخلوية غير متاحة"))
+                }
+            }
+        }
+
+        val activeNetwork = connectivityManager.activeNetwork
+        val capabilities = connectivityManager.getNetworkCapabilities(activeNetwork)
+        if (activeNetwork != null && capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true) {
+            continuation.resume(activeNetwork)
+            return@suspendCancellableCoroutine
+        }
+
+        connectivityManager.requestNetwork(networkRequest, callback)
+        continuation.invokeOnCancellation { connectivityManager.unregisterNetworkCallback(callback) }
+    }
+
+    private fun executeOnNetwork(
+        network: Network,
+        urlString: String,
+        requestBody: String?,
+        accessToken: String? = null
+    ): String {
+        val url = URL(urlString)
+        val connection = network.openConnection(url) as HttpsURLConnection
+        try {
+            connection.apply {
+                connectTimeout = 15_000
+                readTimeout = 15_000
+                setRequestProperty("Content-Type", "application/json; charset=UTF-8")
+                setRequestProperty("Accept", "application/json")
+                setRequestProperty("X-Atheer-Source", "cellular")
+
+                if (accessToken != null) {
+                    setRequestProperty("Authorization", "Bearer $accessToken")
+                }
+
+                if (requestBody != null) {
+                    requestMethod = "POST"
+                    doOutput = true
+                    outputStream.use { it.write(requestBody.toByteArray(Charsets.UTF_8)) }
+                } else {
+                    requestMethod = "GET"
+                }
+            }
+
+            return if (connection.responseCode in 200..299) {
+                connection.inputStream.bufferedReader().use { it.readText() }
+            } else {
+                throw IOException("فشل الطلب الخلوي - كود: ${connection.responseCode}")
+            }
+        } finally {
+            connection.disconnect()
+        }
+    }
+
     fun isNetworkAvailable(): Boolean {
         val network = connectivityManager.activeNetwork ?: return false
         val capabilities = connectivityManager.getNetworkCapabilities(network) ?: return false
@@ -228,26 +178,28 @@ class AtheerNetworkRouter(private val context: Context) {
     }
 
     /**
-     * جلب مفاتيح الدفع غير المتصلة (Offline Tokens) من السيرفر
-     * يتم التوجيه عبر الشبكة الخلوية باستخدام دالة executeViaCellular
+     * جلب مفاتيح الدفع غير المتصلة (Offline Tokens) من السيرفر.
+     * تم تعديل هذه الدالة لإرسال العدد والسقف المطلوب في جسم الطلب (POST) باستخدام الاتصال القياسي.
      */
-    suspend fun fetchOfflineTokens(apiBaseUrl: String, authToken: String): Result<List<String>> {
+    suspend fun fetchOfflineTokens(apiBaseUrl: String, authToken: String, count: Int, limit: Long): Result<List<String>> {
         return try {
             val url = "$apiBaseUrl/api/v1/wallet/offline-tokens"
-            
-            // 1. استخدام الدالة الموجودة لديك في نفس الكلاس لتنفيذ الاتصال
-            // نمرر requestBody كـ null لأن الطلب GET
-            val responseStr = executeViaCellular(
+
+            // بناء جسم الطلب (JSON Body) لإرسال الإعدادات
+            val requestBody = org.json.JSONObject().apply {
+                put("count", count)
+                put("limit", limit)
+            }.toString()
+
+            // 🌟 استخدام الاتصال القياسي وإرسال الطلب كـ POST
+            val responseStr = executeStandard(
                 urlString = url,
-                requestBody = null, 
+                requestBody = requestBody,
                 accessToken = authToken
             )
-            
-            // 2. فك تشفير استجابة JSON
-            val gson = Gson()
-            val response = gson.fromJson(responseStr, TokensResponse::class.java)
-            
-            // 3. التحقق من نجاح العملية واستخراج التوكنز
+
+            val response = Gson().fromJson(responseStr, TokensResponse::class.java)
+
             if (response != null && response.success && response.data?.tokens != null) {
                 Result.success(response.data.tokens)
             } else {
@@ -259,4 +211,3 @@ class AtheerNetworkRouter(private val context: Context) {
         }
     }
 }
-

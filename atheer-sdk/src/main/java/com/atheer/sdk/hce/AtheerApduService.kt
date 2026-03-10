@@ -4,6 +4,7 @@ import android.nfc.cardemulation.HostApduService
 import android.os.Bundle
 import android.util.Log
 import com.atheer.sdk.security.AtheerTokenManager
+import android.content.Intent
 
 /**
  * خدمة HCE (محاكاة البطاقة المضيفة) لـ Atheer SDK
@@ -19,7 +20,7 @@ import com.atheer.sdk.security.AtheerTokenManager
  * 5. تُرسِل الخدمة الرمز المميز التالي من خزنة الرموز غير المتصلة (Offline Token Vault)
  *
  * بروتوكول APDU (Application Protocol Data Unit):
- * - كل أمر APDU يتبع الهيكل: [CLA][INS][P1][P2][Lc][Data][Le]
+
  * - كل رد APDU ينتهي بكود الحالة: 9000 = نجاح، 6A83 = لا توجد رموز، 6A82 = ملف غير موجود
  *
  * @see HostApduService الفئة الأصلية من Android
@@ -139,10 +140,18 @@ class AtheerApduService : HostApduService() {
      * @return بيانات الرد تتضمن الرمز المميز المشفر + كود النجاح 9000
      *         أو كود الخطأ 6A83 إذا لم تتوفر رموز
      */
+    /**
+     * معالجة طلب بيانات الدفع باستهلاك رمز مميز من الخزنة
+     */
     private fun handleGetPaymentData(): ByteArray {
         val token = tokenManager.consumeNextToken()
         return if (token != null) {
             Log.i(TAG, "إرسال رمز مميز من الخزنة عبر NFC...")
+
+            // 🌟 التعديل الجديد: إرسال إشارة (Broadcast) لتطبيق العميل
+            val intent = Intent("com.atheer.sdk.ACTION_NFC_TAP_SUCCESS")
+            sendBroadcast(intent)
+
             val tokenBytes = token.toByteArray(Charsets.UTF_8)
             tokenBytes + APDU_OK
         } else {
