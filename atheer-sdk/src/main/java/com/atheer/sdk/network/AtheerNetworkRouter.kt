@@ -90,14 +90,14 @@ class AtheerNetworkRouter(private val context: Context) {
         urlString: String,
         requestBody: String? = null,
         accessToken: String? = null
-    ): String {
+    ): String = withContext(Dispatchers.IO) { // التعديل هنا: النقل إلى مسار الخلفية
         Log.d(TAG, "جاري توجيه الطلب عبر الشبكة الخلوية حصراً: $urlString")
 
         val cellularNetwork = withTimeoutOrNull(CELLULAR_NETWORK_TIMEOUT_MS) {
             getCellularNetwork()
         } ?: throw IOException("تعذر الوصول إلى شبكة البيانات الخلوية في الوقت المحدد")
 
-        return withTimeoutOrNull(REQUEST_TIMEOUT_MS) {
+        return@withContext withTimeoutOrNull(REQUEST_TIMEOUT_MS) {
             executeOnNetwork(cellularNetwork, urlString, requestBody, accessToken)
         } ?: throw IOException("انتهت مهلة انتظار الطلب الخلوي")
     }
