@@ -5,7 +5,6 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
-import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -14,7 +13,6 @@ import java.io.IOException
 import java.net.URL
 import javax.net.ssl.HttpsURLConnection
 import kotlin.coroutines.resume
-import kotlin.coroutines.resumeWithException
 import com.google.gson.Gson
 import com.atheer.sdk.model.TokensResponse
 
@@ -51,10 +49,18 @@ class AtheerNetworkRouter(private val context: Context) {
                     requestMethod = "GET"
                 }
             }
+
+            // 🌟 الحل: قراءة الرسائل في حالة النجاح وفي حالة الخطأ (مثل 400)
             if (connection.responseCode in 200..299) {
                 connection.inputStream.bufferedReader().use { it.readText() }
             } else {
-                throw IOException("Error: ${connection.responseCode}")
+                val errorStream = connection.errorStream
+                if (errorStream != null) {
+                    // إرجاع تفاصيل الخطأ القادمة من السيرفر بصيغة JSON ليتمكن SDK من قراءتها
+                    errorStream.bufferedReader().use { it.readText() }
+                } else {
+                    throw IOException("Error: ${connection.responseCode}")
+                }
             }
         } finally {
             connection.disconnect()
@@ -102,7 +108,17 @@ class AtheerNetworkRouter(private val context: Context) {
                     outputStream.use { it.write(body.toByteArray()) }
                 }
             }
-            return connection.inputStream.bufferedReader().use { it.readText() }
+            // 🌟 نفس الحل مطبق هنا في شبكة البيانات
+            if (connection.responseCode in 200..299) {
+                return connection.inputStream.bufferedReader().use { it.readText() }
+            } else {
+                val errorStream = connection.errorStream
+                if (errorStream != null) {
+                    return errorStream.bufferedReader().use { it.readText() }
+                } else {
+                    throw IOException("Error: ${connection.responseCode}")
+                }
+            }
         } finally { connection.disconnect() }
     }
 
