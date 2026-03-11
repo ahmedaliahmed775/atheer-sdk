@@ -18,12 +18,6 @@ import kotlin.coroutines.resumeWithException
 import com.google.gson.Gson
 import com.atheer.sdk.model.TokensResponse
 
-/**
- * موجه الشبكة لـ Atheer SDK
- *
- * تتولى هذه الفئة توجيه طلبات HTTP. تدعم التوجيه عبر الشبكة الخلوية حصراً للعمليات المالية،
- * والتوجيه القياسي (Standard) للعمليات العامة مثل جلب الرموز وعمليات التاجر
- */
 class AtheerNetworkRouter(private val context: Context) {
 
     companion object {
@@ -35,71 +29,50 @@ class AtheerNetworkRouter(private val context: Context) {
     private val connectivityManager =
         context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
 
-    /**
-     * تنفيذ طلب HTTP عبر الشبكة الافتراضية للجهاز (Wi-Fi أو بيانات).
-     * يُستخدم هذا المسار للسماح للعملاء بجلب الرموز ולلتاجر بإجراء العمليات دون الحاجة لفرض بيانات الهاتف.
-     */
     suspend fun executeStandard(
         urlString: String,
         requestBody: String? = null,
         accessToken: String? = null
     ): String = withContext(Dispatchers.IO) {
-        Log.d(TAG, "جاري تنفيذ طلب قياسي (عبر أي شبكة متاحة): $urlString")
         val url = URL(urlString)
         val connection = url.openConnection() as HttpsURLConnection
-
         try {
             connection.apply {
                 connectTimeout = 15_000
                 readTimeout = 15_000
                 setRequestProperty("Content-Type", "application/json; charset=UTF-8")
                 setRequestProperty("Accept", "application/json")
-                setRequestProperty("X-Atheer-Source", "standard")
-
-                if (accessToken != null) {
-                    setRequestProperty("Authorization", "Bearer $accessToken")
-                }
-
+                if (accessToken != null) setRequestProperty("Authorization", "Bearer $accessToken")
                 if (requestBody != null) {
                     requestMethod = "POST"
                     doOutput = true
-                    outputStream.use { os ->
-                        os.write(requestBody.toByteArray(Charsets.UTF_8))
-                    }
+                    outputStream.use { it.write(requestBody.toByteArray(Charsets.UTF_8)) }
                 } else {
                     requestMethod = "GET"
                 }
             }
-
-            val responseCode = connection.responseCode
-            if (responseCode in 200..299) {
+            if (connection.responseCode in 200..299) {
                 connection.inputStream.bufferedReader().use { it.readText() }
             } else {
-                val errorBody = connection.errorStream?.bufferedReader()?.use { it.readText() } ?: ""
-                throw IOException("فشل الطلب القياسي - كود: $responseCode - $errorBody")
+                throw IOException("Error: ${connection.responseCode}")
             }
         } finally {
             connection.disconnect()
         }
     }
 
-    /**
-     * تنفيذ طلب HTTP عبر شبكة البيانات الخلوية حصراً.
-     */
     suspend fun executeViaCellular(
         urlString: String,
         requestBody: String? = null,
         accessToken: String? = null
     ): String = withContext(Dispatchers.IO) {
-        Log.d(TAG, "جاري توجيه الطلب عبر الشبكة الخلوية حصراً: $urlString")
-
         val cellularNetwork = withTimeoutOrNull(CELLULAR_NETWORK_TIMEOUT_MS) {
             getCellularNetwork()
-        } ?: throw IOException("تعذر الوصول إلى شبكة البيانات الخلوية في الوقت المحدد")
+        } ?: throw IOException("Cellular network unavailable")
 
         return@withContext withTimeoutOrNull(REQUEST_TIMEOUT_MS) {
             executeOnNetwork(cellularNetwork, urlString, requestBody, accessToken)
-        } ?: throw IOException("انتهت مهلة انتظار الطلب الخلوي")
+        } ?: throw IOException("Request timeout")
     }
 
     private suspend fun getCellularNetwork(): Network = suspendCancellableCoroutine { continuation ->
@@ -113,62 +86,24 @@ class AtheerNetworkRouter(private val context: Context) {
                 connectivityManager.unregisterNetworkCallback(this)
                 if (continuation.isActive) continuation.resume(network)
             }
-
-            override fun onUnavailable() {
-                if (continuation.isActive) {
-                    continuation.resumeWithException(IOException("الشبكة الخلوية غير متاحة"))
-                }
-            }
         }
-
-        val activeNetwork = connectivityManager.activeNetwork
-        val capabilities = connectivityManager.getNetworkCapabilities(activeNetwork)
-        if (activeNetwork != null && capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true) {
-            continuation.resume(activeNetwork)
-            return@suspendCancellableCoroutine
-        }
-
         connectivityManager.requestNetwork(networkRequest, callback)
-        continuation.invokeOnCancellation { connectivityManager.unregisterNetworkCallback(callback) }
     }
 
-    private fun executeOnNetwork(
-        network: Network,
-        urlString: String,
-        requestBody: String?,
-        accessToken: String? = null
-    ): String {
-        val url = URL(urlString)
-        val connection = network.openConnection(url) as HttpsURLConnection
+    private fun executeOnNetwork(network: Network, url: String, body: String?, token: String?): String {
+        val connection = network.openConnection(URL(url)) as HttpsURLConnection
         try {
             connection.apply {
-                connectTimeout = 15_000
-                readTimeout = 15_000
-                setRequestProperty("Content-Type", "application/json; charset=UTF-8")
-                setRequestProperty("Accept", "application/json")
-                setRequestProperty("X-Atheer-Source", "cellular")
-
-                if (accessToken != null) {
-                    setRequestProperty("Authorization", "Bearer $accessToken")
-                }
-
-                if (requestBody != null) {
+                setRequestProperty("Content-Type", "application/json")
+                if (token != null) setRequestProperty("Authorization", "Bearer $token")
+                if (body != null) {
                     requestMethod = "POST"
                     doOutput = true
-                    outputStream.use { it.write(requestBody.toByteArray(Charsets.UTF_8)) }
-                } else {
-                    requestMethod = "GET"
+                    outputStream.use { it.write(body.toByteArray()) }
                 }
             }
-
-            return if (connection.responseCode in 200..299) {
-                connection.inputStream.bufferedReader().use { it.readText() }
-            } else {
-                throw IOException("فشل الطلب الخلوي - كود: ${connection.responseCode}")
-            }
-        } finally {
-            connection.disconnect()
-        }
+            return connection.inputStream.bufferedReader().use { it.readText() }
+        } finally { connection.disconnect() }
     }
 
     fun isNetworkAvailable(): Boolean {
@@ -177,37 +112,22 @@ class AtheerNetworkRouter(private val context: Context) {
         return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
     }
 
-    /**
-     * جلب مفاتيح الدفع غير المتصلة (Offline Tokens) من السيرفر.
-     * تم تعديل هذه الدالة لإرسال العدد والسقف المطلوب في جسم الطلب (POST) باستخدام الاتصال القياسي.
-     */
     suspend fun fetchOfflineTokens(apiBaseUrl: String, authToken: String, count: Int, limit: Long): Result<List<String>> {
         return try {
             val url = "$apiBaseUrl/api/v1/wallet/offline-tokens"
-
-            // بناء جسم الطلب (JSON Body) لإرسال الإعدادات
             val requestBody = org.json.JSONObject().apply {
                 put("count", count)
                 put("limit", limit)
             }.toString()
 
-            // 🌟 استخدام الاتصال القياسي وإرسال الطلب كـ POST
-            val responseStr = executeStandard(
-                urlString = url,
-                requestBody = requestBody,
-                accessToken = authToken
-            )
-
+            val responseStr = executeStandard(url, requestBody, authToken)
             val response = Gson().fromJson(responseStr, TokensResponse::class.java)
 
-            if (response != null && response.success && response.data?.tokens != null) {
+            if (response?.success == true && response.data?.tokens != null) {
                 Result.success(response.data.tokens)
             } else {
-                Result.failure(Exception("فشل في جلب مفاتيح الدفع من السيرفر"))
+                Result.failure(Exception("Failed to fetch tokens"))
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "خطأ أثناء جلب مفاتيح الدفع: ${e.message}")
-            Result.failure(e)
-        }
+        } catch (e: Exception) { Result.failure(e) }
     }
 }
