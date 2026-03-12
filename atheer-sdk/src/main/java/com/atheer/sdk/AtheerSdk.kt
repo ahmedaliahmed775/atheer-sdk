@@ -468,4 +468,20 @@ class AtheerSdk private constructor(
      * @return كائن AtheerDatabase
      */
     fun getDatabase(): AtheerDatabase = database
+    // أضف هذه الدوال داخل كلاس AtheerSdk
+    fun setNextOfflineLimit(amount: Int) {
+        val prefs = context.getSharedPreferences("AtheerSecurityPrefs", Context.MODE_PRIVATE)
+        prefs.edit().putInt("OFFLINE_LIMIT", amount).apply()
+    }
+
+    fun getNextOfflineLimit(): Int {
+        val prefs = context.getSharedPreferences("AtheerSecurityPrefs", Context.MODE_PRIVATE)
+        // القيمة الافتراضية يمكن أن تكون رقماً كبيراً جداً (مفتوح) إذا لم يحدد العميل شيئاً
+        return prefs.getInt("OFFLINE_LIMIT", Int.MAX_VALUE)
+    }
+
+    fun clearOfflineLimit() {
+        val prefs = context.getSharedPreferences("AtheerSecurityPrefs", Context.MODE_PRIVATE)
+        prefs.edit().remove("OFFLINE_LIMIT").apply()
+    }
 }

@@ -5,53 +5,28 @@ import android.os.Bundle
 import android.util.Log
 import com.atheer.sdk.security.AtheerTokenManager
 import android.content.Intent
+import com.atheer.sdk.AtheerSdk
 
 /**
  * خدمة HCE (محاكاة البطاقة المضيفة) لـ Atheer SDK
- *
- * تُمكِّن هذه الخدمة الهاتف من العمل كبطاقة NFC للمدفوعات اللاتلامسية
- * حتى في غياب الاتصال بالإنترنت (الوضع غير المتصل - Offline Mode).
- *
- * آلية العمل:
- * 1. يقترب الهاتف من جهاز نقطة البيع (POS)
- * 2. يُرسِل جهاز POS أمر APDU (SELECT AID) لاختيار التطبيق
- * 3. ترد هذه الخدمة بإشارة الموافقة (9000)
- * 4. يطلب POS بيانات الدفع بأمر GET DATA
- * 5. تُرسِل الخدمة الرمز المميز التالي من خزنة الرموز غير المتصلة (Offline Token Vault)
- *
- * بروتوكول APDU (Application Protocol Data Unit):
-
- * - كل رد APDU ينتهي بكود الحالة: 9000 = نجاح، 6A83 = لا توجد رموز، 6A82 = ملف غير موجود
- *
- * @see HostApduService الفئة الأصلية من Android
  */
 class AtheerApduService : HostApduService() {
 
     companion object {
         private const val TAG = "AtheerApduService"
 
-        // أوامر APDU المعروفة
-        // أمر SELECT: يُستخدَم لاختيار التطبيق بواسطة AID
         private const val SELECT_APDU_HEADER = 0x00.toByte()
-
-        // أمر GET DATA: يُستخدَم لطلب بيانات الدفع
         private const val GET_PAYMENT_DATA_INS = 0xCA.toByte()
 
-        // ردود APDU القياسية
-        // 9000 = نجاح العملية (Success)
         private val APDU_OK = byteArrayOf(0x90.toByte(), 0x00.toByte())
-
-        // 6A82 = الملف أو التطبيق غير موجود (File Not Found)
         private val APDU_FILE_NOT_FOUND = byteArrayOf(0x6A.toByte(), 0x82.toByte())
-
-        // 6A83 = لا توجد رموز مميزة متاحة (No Offline Tokens Available)
         private val APDU_NO_TOKENS = byteArrayOf(0x6A.toByte(), 0x83.toByte())
-
-        // 6F00 = خطأ غير معروف (Unknown Error)
         private val APDU_UNKNOWN_ERROR = byteArrayOf(0x6F.toByte(), 0x00.toByte())
+        
+        // كود الخطأ 6A80 لإخبار التاجر برفض العملية (Wrong Data/Amount Rejected)
+        private val APDU_REJECTED_AMOUNT = byteArrayOf(0x6A.toByte(), 0x80.toByte())
     }
 
-    // مدير خزنة الرموز المميزة غير المتصلة
     private lateinit var tokenManager: AtheerTokenManager
 
     override fun onCreate() {
@@ -60,44 +35,52 @@ class AtheerApduService : HostApduService() {
         tokenManager = AtheerTokenManager(applicationContext)
     }
 
-    /**
-     * معالجة أوامر APDU الواردة من جهاز POS
-     *
-     * هذه الدالة هي القلب النابض للخدمة - تُستدعى تلقائياً من نظام Android
-     * عند استلام كل أمر APDU من جهاز القارئ.
-     *
-     * منطق المعالجة:
-     * - إذا كان الأمر SELECT → إرسال موافقة (9000)
-     * - إذا كان الأمر GET PAYMENT DATA → استهلاك رمز من الخزنة وإرساله + 9000
-     * - أي أمر آخر → إرسال خطأ (6A82)
-     *
-     * @param commandApdu بيانات أمر APDU الوارد من جهاز القارئ
-     * @param extras بيانات إضافية (غير مستخدمة حالياً)
-     * @return بيانات رد APDU المراد إرسالها إلى جهاز القارئ
-     */
     override fun processCommandApdu(commandApdu: ByteArray, extras: Bundle?): ByteArray {
-        Log.d(TAG, "استلام أمر APDU: ${commandApdu.toHexString()}")
+        val commandHex = commandApdu.toHexString()
+        Log.d(TAG, "استلام أمر APDU: $commandHex")
 
-        // التحقق من أن البيانات الواردة تحتوي على بيانات كافية
         if (commandApdu.size < 4) {
-            Log.w(TAG, "تحذير: أمر APDU غير مكتمل - الطول: ${commandApdu.size}")
             return APDU_UNKNOWN_ERROR
         }
 
         return try {
             when {
-                // التحقق من أمر SELECT AID
+                // 1. التحقق من أمر SELECT AID (بداية عملية التلامس)
                 isSelectAidCommand(commandApdu) -> {
                     Log.i(TAG, "استلام أمر SELECT AID - الرد بالموافقة")
                     APDU_OK
                 }
 
-                // التحقق من أمر طلب بيانات الدفع
+                // 2. التحقق من أمر طلب بيانات الدفع (الذي يحتوي على المبلغ)
                 isGetPaymentDataCommand(commandApdu) -> {
-                    handleGetPaymentData()
+                    // --- تطبيق الجدار الناري للأمان (Security Firewall) ---
+                    
+                    // استخراج المبلغ من الأمر القادم من جهاز التاجر
+                    val requestedAmount = extractAmountFromApdu(commandApdu)
+                    
+                    // جلب الحد الذي وضعه العميل من الـ SDK
+                    val userLimit = AtheerSdk.getInstance().getNextOfflineLimit()
+
+                    Log.d(TAG, "تحقق الأمان: المبلغ المطلوب = $requestedAmount، الحد المسموح = $userLimit")
+
+                    if (requestedAmount > userLimit) {
+                        Log.w(TAG, "تم رفض العملية: المبلغ يتجاوز الحد المسموح")
+                        
+                        // إرسال Broadcast لتنبيه واجهة التطبيق بالرفض
+                        sendBroadcast(Intent("com.atheer.sdk.ACTION_PAYMENT_REJECTED").apply {
+                            putExtra("amount", requestedAmount)
+                            putExtra("limit", userLimit.toDouble())
+                        })
+                        
+                        APDU_REJECTED_AMOUNT
+                    } else {
+                        // المبلغ مقبول: مسح الحد (لأنه للاستخدام مرة واحدة) وإرسال التوكن
+                        Log.i(TAG, "المبلغ مقبول. جاري توليد توكن الدفع...")
+                        AtheerSdk.getInstance().clearOfflineLimit()
+                        handleGetPaymentData()
+                    }
                 }
 
-                // أي أمر غير معروف
                 else -> {
                     Log.w(TAG, "أمر APDU غير مدعوم: INS = ${commandApdu[1].toUByte()}")
                     APDU_FILE_NOT_FOUND
@@ -109,83 +92,53 @@ class AtheerApduService : HostApduService() {
         }
     }
 
-    /**
-     * التحقق من أن الأمر هو SELECT AID
-     *
-     * بنية أمر SELECT: [00][A4][04][00][Lc][AID Data]
-     *
-     * @param apdu بيانات الأمر
-     * @return true إذا كان أمر SELECT، false في غير ذلك
-     */
     private fun isSelectAidCommand(apdu: ByteArray): Boolean {
-        // CLA = 00, INS = A4, P1 = 04 (SELECT by AID)
-        return apdu[0] == 0x00.toByte() &&
-                apdu[1] == 0xA4.toByte() &&
-                apdu[2] == 0x04.toByte()
+        return apdu[0] == 0x00.toByte() && apdu[1] == 0xA4.toByte() && apdu[2] == 0x04.toByte()
     }
 
-    /**
-     * التحقق من أن الأمر هو طلب بيانات الدفع
-     *
-     * @param apdu بيانات الأمر
-     * @return true إذا كان أمر GET PAYMENT DATA
-     */
     private fun isGetPaymentDataCommand(apdu: ByteArray): Boolean {
+        // نعتبر أمر GET DATA (0xCA) هو طلب الدفع الذي يحمل المبلغ
         return apdu[0] == SELECT_APDU_HEADER && apdu[1] == GET_PAYMENT_DATA_INS
     }
 
     /**
-     * معالجة طلب بيانات الدفع باستهلاك رمز مميز من الخزنة
-     *
-     * @return بيانات الرد تتضمن الرمز المميز المشفر + كود النجاح 9000
-     *         أو كود الخطأ 6A83 إذا لم تتوفر رموز
+     * استخراج المبلغ من بيانات APDU
+     * يفترض هذا المثال أن المبلغ موجود في البيانات الإضافية للأمر (Payload)
      */
-    /**
-     * معالجة طلب بيانات الدفع باستهلاك رمز مميز من الخزنة
-     */
+    private fun extractAmountFromApdu(apdu: ByteArray): Double {
+        return try {
+            // منطق استخراج المبلغ: يعتمد على بروتوكول التاجر
+            // مثال: إذا كان المبلغ مشفراً في البايتات من 5 إلى 8
+            if (apdu.size >= 9) {
+                val amountCents = ((apdu[5].toInt() and 0xFF) shl 24) or
+                                 ((apdu[6].toInt() and 0xFF) shl 16) or
+                                 ((apdu[7].toInt() and 0xFF) shl 8) or
+                                 (apdu[8].toInt() and 0xFF)
+                amountCents / 100.0
+            } else {
+                0.0
+            }
+        } catch (e: Exception) {
+            0.0
+        }
+    }
+
     private fun handleGetPaymentData(): ByteArray {
         val token = tokenManager.consumeNextToken()
         return if (token != null) {
-            Log.i(TAG, "إرسال رمز مميز من الخزنة عبر NFC...")
-
-            // 🌟 التعديل الجديد: إرسال إشارة (Broadcast) لتطبيق العميل
             val intent = Intent("com.atheer.sdk.ACTION_NFC_TAP_SUCCESS")
             sendBroadcast(intent)
 
             val tokenBytes = token.toByteArray(Charsets.UTF_8)
             tokenBytes + APDU_OK
         } else {
-            Log.w(TAG, "لا توجد رموز مميزة متاحة في الخزنة")
             APDU_NO_TOKENS
         }
     }
 
-    /**
-     * إشعار بانقطاع الاتصال عن بعد
-     *
-     * تُستدعى هذه الدالة عندما يبتعد الهاتف عن جهاز القارئ أو
-     * عند انقطاع الاتصال لأي سبب آخر.
-     *
-     * @param reason كود سبب الانقطاع:
-     *   - DEACTIVATION_LINK_LOSS: ابتعاد الهاتف عن القارئ
-     *   - DEACTIVATION_DESELECTED: اختيار تطبيق آخر
-     */
     override fun onDeactivated(reason: Int) {
-        val reasonText = when (reason) {
-            DEACTIVATION_LINK_LOSS -> "انقطاع الإشارة - ابتعاد الجهاز"
-            DEACTIVATION_DESELECTED -> "تم إلغاء تحديد التطبيق"
-            else -> "سبب غير معروف: $reason"
-        }
-        Log.i(TAG, "تم إلغاء تفعيل خدمة HCE - السبب: $reasonText")
+        Log.i(TAG, "تم إلغاء تفعيل خدمة HCE - السبب: $reason")
     }
 
-    override fun onDestroy() {
-        super.onDestroy()
-        Log.i(TAG, "إيقاف خدمة HCE لـ Atheer SDK")
-    }
-
-    /**
-     * دالة مساعدة لتحويل مصفوفة البايتات إلى تمثيل نصي Hex لأغراض التسجيل
-     */
     private fun ByteArray.toHexString(): String = joinToString("") { "%02X".format(it) }
 }
