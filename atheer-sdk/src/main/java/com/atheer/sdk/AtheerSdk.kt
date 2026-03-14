@@ -18,32 +18,27 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
 /**
- * الواجهة الرئيسية (Facade) لـ Atheer SDK — إضافة مدفوعات غير متصلة بدون واجهة (Headless)
+ * الواجهة الرئيسية (Facade) لـ Atheer SDK — إدارة مدفوعات SoftPOS والمحافظ الرقمية.
  *
- * هذه الفئة هي نقطة الدخول الوحيدة للتطبيقات الخارجية (Host Apps) للتفاعل مع المكتبة.
- * SDK لا يتعامل مع إدارة حسابات المستخدمين (تسجيل دخول/تسجيل/رصيد) —
- * هذه مسؤولية التطبيق المضيف (Host Wallet App).
+ * هذه الفئة هي نقطة الدخول الوحيدة (Single Point of Entry) للتطبيقات المضيفة (Host Apps)
+ * للتفاعل مع مكتبة Atheer. المكتبة تركز حصراً على أمان التشفير، الاتصال اللاتلامسي (NFC)،
+ * والمزامنة، وتترك إدارة حسابات المستخدمين (تسجيل الدخول/الأرصدة) للتطبيق المضيف.
  *
  * المهام الرئيسية:
- * - تزويد الرموز المميزة غير المتصلة (Offline Token Provisioning)
- * - إجراء عمليات الشحن عبر الشبكة الخلوية
- * - معالجة المعاملات وتخزينها محلياً للمزامنة
+ * - تزويد وإدارة الرموز المميزة غير المتصلة (Offline Token Provisioning).
+ * - معالجة عمليات الدفع عبر الشبكة الخلوية أو Wi-Fi.
+ * - تخزين المعاملات غير المتصلة محلياً بشكل آمن ومزامنتها لاحقاً.
  *
  * نمط التهيئة:
  * ```kotlin
  * // في Application.onCreate():
  * AtheerSdk.init(context, "MERCHANT_ID_123", "[https://api.atheer.com](https://api.atheer.com)")
  *
- * // استخدام SDK:
+ * // استخدام المكتبة:
  * val sdk = AtheerSdk.getInstance()
- * sdk.fetchAndProvisionTokens(accessToken) // لجلب الرموز من السيرفر
- * sdk.charge(request, accessToken)
+ * sdk.fetchAndProvisionTokens(accessToken, count = 5, limit = 5000)
+ * sdk.charge(chargeRequest, accessToken)
  * ```
- *
- * المعمارية المطبقة: Clean Architecture
- * - طبقة البيانات: AtheerDatabase, AtheerNetworkRouter
- * - طبقة المجال: AtheerKeystoreManager, AtheerApduService, AtheerNfcReader
- * - طبقة العرض: هذه الفئة (Facade)
  */
 class AtheerSdk private constructor(
     private val context: Context,
@@ -59,20 +54,19 @@ class AtheerSdk private constructor(
         private var instance: AtheerSdk? = null
 
         /**
-         * تهيئة SDK بالإعدادات الأساسية
+         * تهيئة مكتبة Atheer SDK بالإعدادات الأساسية.
          *
-         * يجب استدعاء هذه الدالة مرة واحدة فقط، ويُنصَح باستدعائها في
-         * Application.onCreate() لضمان التهيئة قبل أي استخدام.
+         * يجب استدعاء هذه الدالة مرة واحدة فقط على مستوى التطبيق (يُفضل في Application class)
+         * لضمان جاهزية خدمات التشفير وقواعد البيانات قبل أي استخدام.
          *
-         * @param context سياق التطبيق (يُنصَح باستخدام applicationContext)
-         * @param merchantId معرف التاجر الصادر من Atheer
-         * @param apiBaseUrl رابط الخادم الأساسي للـ API
-         * @throws IllegalStateException إذا تم استدعاء init أكثر من مرة
+         * @param context سياق التطبيق (يُفضل applicationContext لمنع تسرب الذاكرة).
+         * @param merchantId المعرف الفريد للتاجر الصادر من نظام Atheer.
+         * @param apiBaseUrl الرابط الأساسي لخوادم Atheer API.
          */
         fun init(context: Context, merchantId: String, apiBaseUrl: String) {
             Log.i(TAG, "جاري تهيئة Atheer SDK - معرف التاجر: $merchantId")
             if (instance != null) {
-                Log.w(TAG, "تحذير: تم استدعاء init أكثر من مرة - سيتم تجاهل الاستدعاء الثاني")
+                Log.w(TAG, "تنبيه: تم استدعاء init() مسبقاً. سيتم تجاهل هذا الاستدعاء.")
                 return
             }
             synchronized(this) {
@@ -82,56 +76,57 @@ class AtheerSdk private constructor(
                         merchantId = merchantId,
                         apiBaseUrl = apiBaseUrl
                     )
-                    Log.i(TAG, "تمت تهيئة Atheer SDK بنجاح")
+                    Log.i(TAG, "تمت تهيئة Atheer SDK بنجاح.")
                 }
             }
         }
 
         /**
-         * الحصول على النسخة الوحيدة من SDK (نمط Singleton)
+         * الحصول على النسخة الوحيدة (Singleton) من مكتبة SDK.
          *
-         * @return النسخة الوحيدة من AtheerSdk
-         * @throws IllegalStateException إذا لم يتم استدعاء init أولاً
+         * @return نسخة من [AtheerSdk].
+         * @throws IllegalStateException إذا تم الاستدعاء قبل تنفيذ `init()`.
          */
         fun getInstance(): AtheerSdk {
             return instance ?: throw IllegalStateException(
-                "لم يتم تهيئة Atheer SDK بعد. يرجى استدعاء AtheerSdk.init() أولاً"
+                "لم يتم تهيئة Atheer SDK بعد. يرجى استدعاء AtheerSdk.init() أولاً."
             )
         }
 
         /**
-         * إعادة تعيين النسخة - للاستخدام في الاختبارات فقط
-         * لا تستخدم هذه الدالة في بيئة الإنتاج
+         * إعادة تعيين النسخة الحالية - **مخصصة لبيئة الاختبارات فقط (Unit Tests).**
+         * يجب عدم استخدام هذه الدالة مطلقاً في بيئة الإنتاج.
          */
         internal fun resetForTesting() {
             instance = null
-            Log.d(TAG, "تم إعادة تعيين Atheer SDK للاختبارات")
+            Log.d(TAG, "تم إعادة تعيين Atheer SDK لأغراض الاختبار.")
         }
     }
 
-    // مكونات SDK الداخلية
-    private val keystoreManager: AtheerKeystoreManager = AtheerKeystoreManager()
-    private val networkRouter: AtheerNetworkRouter = AtheerNetworkRouter(context)
-    private val database: AtheerDatabase = AtheerDatabase.getInstance(context)
-    private val tokenManager: AtheerTokenManager = AtheerTokenManager(context)
+    // ==================== المكونات الداخلية ====================
+    private val keystoreManager = AtheerKeystoreManager()
+    private val networkRouter = AtheerNetworkRouter(context)
+    private val database = AtheerDatabase.getInstance(context)
+    private val tokenManager = AtheerTokenManager(context)
 
-    // نطاق Coroutines الخاص بـ SDK
+    // نطاق Coroutines خاص بالمكتبة لضمان عدم تأثر العمليات الخلفية بدورة حياة الـ UI
     private val sdkScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+    // ==================== معالجة المعاملات والمزامنة ====================
+
     /**
-     * معالجة معاملة دفع كاملة
+     * معالجة معاملة دفع كاملة (للعمليات المجدولة أو التي تتطلب تخزيناً محلياً).
      *
      * الخطوات:
-     * 1. توليد Nonce لمنع هجمات إعادة التشغيل
-     * 2. ترميز بيانات البطاقة (Tokenization)
-     * 3. حفظ المعاملة محلياً في قاعدة البيانات المشفرة (للوضع غير المتصل)
-     * 4. محاولة إرسال المعاملة للخادم عبر الشبكة الخلوية
-     * 5. تحديث حالة المزامنة عند النجاح
+     * 1. توليد Nonce أمني لمنع هجمات إعادة الإرسال (Replay Attacks).
+     * 2. تشفير بيانات المعاملة والمبلغ.
+     * 3. حفظ المعاملة محلياً في قاعدة البيانات المشفرة (استعداداً للوضع غير المتصل).
+     * 4. محاولة الإرسال الفوري للخادم؛ وفي حال الفشل، تبقى المعاملة معلقة للمزامنة لاحقاً.
      *
-     * @param transaction بيانات المعاملة المراد معالجتها
-     * @param accessToken رمز المصادقة (Bearer Token) لإرساله في الـ Authorization Header
-     * @param onSuccess دالة رد النداء عند نجاح المعالجة
-     * @param onError دالة رد النداء عند الفشل
+     * @param transaction كائن يحتوي على تفاصيل المعاملة.
+     * @param accessToken رمز المصادقة (Bearer Token).
+     * @param onSuccess دالة استدعاء (Callback) تُنفذ عند نجاح الحفظ أو الإرسال.
+     * @param onError دالة استدعاء (Callback) تُنفذ عند حدوث خطأ برمجي أو تشفيري.
      */
     fun processTransaction(
         transaction: AtheerTransaction,
@@ -139,21 +134,16 @@ class AtheerSdk private constructor(
         onSuccess: (String) -> Unit,
         onError: (Exception) -> Unit
     ) {
-        Log.i(TAG, "جاري معالجة معاملة دفع جديدة - المعرف: ${transaction.transactionId}")
+        Log.i(TAG, "بدء معالجة معاملة دفع جديدة - المعرف: ${transaction.transactionId}")
         sdkScope.launch {
             try {
-                // الخطوة 1: توليد Nonce
                 val nonce = keystoreManager.generateNonce()
-                Log.d(TAG, "تم توليد Nonce: ${nonce.take(8)}...")
+                Log.d(TAG, "تم توليد Nonce أمني: ${nonce.take(8)}...")
 
-                // الخطوة 2: ترميز بيانات البطاقة إن وُجدت
-                // يتطلب transaction.tokenizedCard أن يكون محضراً مسبقاً
                 val tokenizedCard = transaction.tokenizedCard
-                    ?: throw IllegalArgumentException(
-                        "يجب توفير tokenizedCard في كائن AtheerTransaction قبل معالجة المعاملة"
-                    )
+                    ?: throw IllegalArgumentException("عذراً، يجب توفير tokenizedCard في المعاملة.")
 
-                // الخطوة 3: تشفير القيمة وحفظ المعاملة محلياً
+                // تشفير القيمة المالية وحفظ المعاملة محلياً (Data at Rest Security)
                 val encryptedAmount = keystoreManager.encrypt(transaction.amount.toString())
                 val transactionEntity = TransactionEntity(
                     transactionId = transaction.transactionId,
@@ -167,9 +157,9 @@ class AtheerSdk private constructor(
                 )
 
                 database.transactionDao().insertTransaction(transactionEntity)
-                Log.i(TAG, "تم حفظ المعاملة محلياً - المعرف: ${transaction.transactionId}")
+                Log.i(TAG, "تم تأمين وحفظ المعاملة محلياً (Offline Vault).")
 
-                // الخطوة 4: محاولة الإرسال عبر الشبكة الخلوية
+                // محاولة الإرسال الفوري إذا توفرت الشبكة
                 if (networkRouter.isNetworkAvailable()) {
                     try {
                         val requestBody = buildTransactionJson(
@@ -178,122 +168,239 @@ class AtheerSdk private constructor(
                             nonce,
                             transaction.amount
                         )
-                        val response = networkRouter.executeViaCellular(
-                            "$apiBaseUrl/transactions",
+                        val response = networkRouter.executeStandard(
+                            "$apiBaseUrl/api/v1/merchant/charge",
                             requestBody,
                             accessToken
                         )
 
-                        // الخطوة 5: تحديث حالة المزامنة عند النجاح
-                        database.transactionDao().updateSyncStatus(
-                            transaction.transactionId,
-                            true
-                        )
-                        Log.i(TAG, "تمت معالجة المعاملة بنجاح عبر الشبكة: ${transaction.transactionId}")
+                        database.transactionDao().updateSyncStatus(transaction.transactionId, true)
+                        Log.i(TAG, "تم رفع المعاملة للخادم بنجاح.")
 
-                        withContext(Dispatchers.Main) {
-                            onSuccess(response)
-                        }
+                        withContext(Dispatchers.Main) { onSuccess(response) }
                     } catch (networkError: Exception) {
-                        // في حالة فشل الشبكة، يظل السجل محلياً للمزامنة لاحقاً
-                        Log.w(TAG, "فشل في إرسال المعاملة عبر الشبكة - ستتم المزامنة لاحقاً: ${networkError.message}")
+                        Log.w(TAG, "الشبكة غير مستقرة. تم تعليق المعاملة للمزامنة لاحقاً.")
                         withContext(Dispatchers.Main) {
-                            onSuccess("تم حفظ المعاملة للمزامنة عند توفر الشبكة")
+                            onSuccess("تم حفظ المعاملة محلياً وستتم مزامنتها عند استقرار الشبكة.")
                         }
                     }
                 } else {
-                    // الوضع غير المتصل: المعاملة محفوظة محلياً
-                    Log.i(TAG, "الجهاز غير متصل بالشبكة - تم حفظ المعاملة للمزامنة لاحقاً")
+                    Log.i(TAG, "تم تنفيذ المعاملة في وضع عدم الاتصال (Offline Mode).")
                     withContext(Dispatchers.Main) {
-                        onSuccess("تم حفظ المعاملة بنجاح في الوضع غير المتصل")
+                        onSuccess("تمت العملية بنجاح في الوضع اللاتصالي.")
                     }
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "خطأ في معالجة المعاملة: ${e.message}", e)
-                withContext(Dispatchers.Main) {
-                    onError(e)
-                }
+                Log.e(TAG, "فشل فادح في معالجة المعاملة: ${e.message}", e)
+                withContext(Dispatchers.Main) { onError(e) }
             }
         }
     }
 
     /**
-     * مزامنة المعاملات غير المتزامنة مع الخادم
+     * مزامنة المعاملات المعلقة (Pending Transactions) مع خوادم Atheer.
      *
-     * تُستدعى هذه الدالة عند استعادة الاتصال بالشبكة لإرسال جميع
-     * المعاملات التي تمت في الوضع غير المتصل.
+     * تُستدعى هذه الدالة عادةً عند استشعار عودة الاتصال بالإنترنت، وتقوم برفع
+     * كافة المعاملات التي تم تنفيذها في الوضع اللاتصالي.
      *
-     * @param accessToken رمز المصادقة (Bearer Token) لإرساله في الـ Authorization Header
-     * @param onComplete دالة رد النداء عند اكتمال المزامنة مع عدد المعاملات المُزامَنة
+     * @param accessToken رمز المصادقة (Bearer Token).
+     * @param onComplete دالة تُرجع عدد المعاملات التي تمت مزامنتها بنجاح.
      */
     fun syncPendingTransactions(accessToken: String, onComplete: (Int) -> Unit) {
-        Log.i(TAG, "جاري مزامنة المعاملات غير المتزامنة...")
+        Log.i(TAG, "بدء عملية المزامنة الخلفية للمعاملات المعلقة...")
         sdkScope.launch {
             try {
                 val unsyncedTransactions = database.transactionDao().getUnsyncedTransactions()
-                Log.d(TAG, "عدد المعاملات غير المتزامنة: ${unsyncedTransactions.size}")
+                if (unsyncedTransactions.isEmpty()) {
+                    Log.d(TAG, "لا توجد معاملات معلقة للمزامنة.")
+                    withContext(Dispatchers.Main) { onComplete(0) }
+                    return@launch
+                }
 
                 var syncedCount = 0
                 for (entity in unsyncedTransactions) {
                     try {
-                        // فك تشفير المبلغ للحصول على القيمة الأصلية
                         val decryptedAmount = try {
                             keystoreManager.decrypt(entity.encryptedAmount).toLongOrNull() ?: 0L
-                        } catch (e: Exception) {
-                            0L
-                        }
+                        } catch (e: Exception) { 0L }
+
                         val requestBody = buildTransactionJson(
                             entity.transactionId,
                             entity.encryptedToken ?: "",
                             entity.nonce ?: "",
                             decryptedAmount
                         )
-                        networkRouter.executeViaCellular(
-                            "$apiBaseUrl/transactions",
+                        
+                        networkRouter.executeStandard(
+                            "$apiBaseUrl/api/v1/merchant/charge",
                             requestBody,
                             accessToken
                         )
+                        
                         database.transactionDao().updateSyncStatus(entity.transactionId, true)
                         syncedCount++
-                        Log.d(TAG, "تمت مزامنة المعاملة: ${entity.transactionId}")
+                        Log.d(TAG, "تمت مزامنة المعاملة [${entity.transactionId}] بنجاح.")
                     } catch (e: Exception) {
-                        Log.w(TAG, "فشل في مزامنة المعاملة ${entity.transactionId}: ${e.message}")
+                        Log.w(TAG, "تعذر مزامنة المعاملة [${entity.transactionId}]: ${e.message}")
                     }
                 }
 
-                Log.i(TAG, "اكتملت المزامنة - عدد المعاملات المُزامَنة: $syncedCount")
-                withContext(Dispatchers.Main) {
-                    onComplete(syncedCount)
-                }
+                Log.i(TAG, "اكتملت المزامنة. الإجمالي الناجح: $syncedCount")
+                withContext(Dispatchers.Main) { onComplete(syncedCount) }
             } catch (e: Exception) {
-                Log.e(TAG, "خطأ في عملية المزامنة: ${e.message}", e)
-                withContext(Dispatchers.Main) {
-                    onComplete(0)
-                }
+                Log.e(TAG, "انهيار في عملية المزامنة: ${e.message}", e)
+                withContext(Dispatchers.Main) { onComplete(0) }
             }
         }
     }
 
+    // ==================== عمليات الشحن المباشر (POS) ====================
+
     /**
-     * بناء جسم طلب JSON لإرسال بيانات المعاملة للخادم
+     * تنفيذ عملية شحن (خصم) مباشرة من محفظة العميل لصالح التاجر.
      *
-     * يتبع هيكل JSON المعياري للمحافظ المالية بكائنين رئيسيين:
-     * - header: يحتوي على معرف الخدمة ومعرف المعاملة
-     * - body: يحتوي على بيانات الدفع الأساسية
+     * هذه الدالة تقوم بإرسال الرمز المميز (NFC Token) إلى الخادم للمعالجة الفورية.
+     * **التحديث الأمني:** لا يتم رمي استثناء (Exception) في حالات الرفض البنكي
+     * (مثل نقص الرصيد)، بل يتم إرجاع حالة "DECLINED" لمعالجتها بسلاسة في واجهة المستخدم.
      *
-     * @param transactionId معرف المعاملة
-     * @param token الرمز المميز للبطاقة
-     * @param nonce الرقم العشوائي لمنع هجمات إعادة التشغيل
-     * @param amount قيمة المعاملة
-     * @return جسم الطلب بصيغة JSON
+     * @param request كائن يحتوي على مبلغ الشحن والرمز المُلتقط.
+     * @param accessToken رمز المصادقة (Bearer Token).
+     * @return Result يحتوي على [ChargeResponse] (سواءً قُبلت العملية أو رُفضت بنكياً)،
+     * أو يعيد Failure في حالة أخطاء الشبكة فقط.
      */
-    private fun buildTransactionJson(
-        transactionId: String,
-        token: String,
-        nonce: String,
-        amount: Long
-    ): String {
-        // بناء JSON منظم باستخدام JSONObject لضمان سلامة البناء ومنع هجمات الحقن
+    suspend fun charge(request: ChargeRequest, accessToken: String): Result<ChargeResponse> {
+        Log.i(TAG, "بدء طلب الشحن المباشر - المبلغ: ${request.amount} ${request.currency}")
+        return try {
+            val generatedNonce = keystoreManager.generateNonce()
+
+            val serviceDetail = JSONObject().apply { put("serviceName", "ATHEER.ECOMMCASHOUT") }
+            val header = JSONObject().apply { put("serviceDetail", serviceDetail) }
+            val bodyJson = JSONObject().apply {
+                put("amount", request.amount)
+                put("atheerToken", request.atheerToken)
+                put("nonce", generatedNonce)
+                put("merchantId", request.merchantId)
+                put("currency", request.currency)
+            }
+            val body = JSONObject().apply {
+                put("header", header)
+                put("body", bodyJson)
+            }.toString()
+
+            val responseJson = networkRouter.executeStandard(
+                "$apiBaseUrl/api/v1/merchant/charge",
+                body,
+                accessToken
+            )
+            
+            val rootJson = JSONObject(responseJson)
+            
+            if (rootJson.has("header") && rootJson.has("body")) {
+                val headerJson = rootJson.getJSONObject("header").getJSONObject("serviceDetail")
+                val responseBody = rootJson.getJSONObject("body")
+                val responseCode = headerJson.optString("responseCode", "99")
+                
+                // 00 تعني قبول العملية
+                if (responseCode == "00") {
+                    val chargeResponse = ChargeResponse(
+                        transactionId = responseBody.optString("transactionId"),
+                        status = responseBody.optString("status", "ACCEPTED"),
+                        message = headerJson.optString("responseMessage", "تمت العملية بنجاح")
+                    )
+                    Log.i(TAG, "العملية مقبولة - المعرف: ${chargeResponse.transactionId}")
+                    Result.success(chargeResponse)
+                } else {
+                    // ✅ التعديل الأمني: إرجاع الرفض كاستجابة صالحة (DECLINED) بدلاً من انهيار التطبيق
+                    val errorMessage = responseBody.optString("message", "تم رفض العملية من البنك")
+                    val chargeResponse = ChargeResponse(
+                        transactionId = responseBody.optString("transactionId", ""),
+                        status = "DECLINED",
+                        message = errorMessage
+                    )
+                    Log.w(TAG, "العملية مرفوضة (كود $responseCode): $errorMessage")
+                    Result.success(chargeResponse)
+                }
+            } else {
+                val message = rootJson.optString("message", "استجابة غير قياسية من الخادم")
+                throw Exception(message)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "فشل في الاتصال أثناء الشحن: ${e.message}", e)
+            Result.failure(e)
+        }
+    }
+
+    // ==================== إدارة رموز الدفع اللاتلامسي (HCE/NFC) ====================
+
+    /**
+     * طلب وتخزين حزمة جديدة من الرموز المميزة غير المتصلة (Offline Tokens).
+     *
+     * تُستخدم هذه الرموز لاحقاً للدفع عبر تقنية NFC (HCE) عندما يكون هاتف العميل
+     * غير متصل بالإنترنت.
+     *
+     * @param authToken رمز المصادقة الخاص بالمستخدم.
+     * @param count عدد الرموز المراد توليدها.
+     * @param limit السقف الأعلى المسموح به لكل عملية دفع (بالريال).
+     * @return Result يحتوي على العدد الإجمالي للرموز المتاحة في الخزنة.
+     */
+    suspend fun fetchAndProvisionTokens(authToken: String, count: Int, limit: Long): Result<Int> {
+        return try {
+            val networkResult = networkRouter.fetchOfflineTokens(apiBaseUrl, authToken, count, limit)
+            if (networkResult.isSuccess) {
+                val tokens = networkResult.getOrThrow()
+                provisionOfflineTokens(tokens)
+                Result.success(getRemainingTokensCount())
+            } else {
+                Result.failure(networkResult.exceptionOrNull() ?: Exception("فشل جلب الرموز من السيرفر"))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * إدراج رموز مشفرة مباشرة إلى الخزنة المحلية (AtheerTokenManager).
+     */
+    fun provisionOfflineTokens(tokens: List<String>) {
+        Log.i(TAG, "جاري إيداع ${tokens.size} رمز لاتلامسي في الخزنة الآمنة.")
+        tokenManager.provisionTokens(tokens)
+    }
+
+    /**
+     * معرفة الرصيد المتبقي من الرموز اللاتلامسية الصالحة للاستخدام.
+     */
+    fun getRemainingTokensCount(): Int = tokenManager.getTokensCount()
+
+    // ==================== إعدادات السقف المالي اللاتصالي ====================
+
+    /**
+     * تحديد السقف المالي المحلي للعملية اللاتلامسية القادمة.
+     */
+    fun setNextOfflineLimit(amount: Int) {
+        val prefs = context.getSharedPreferences("AtheerSecurityPrefs", Context.MODE_PRIVATE)
+        prefs.edit().putInt("OFFLINE_LIMIT", amount).apply()
+        Log.d(TAG, "تم تعيين السقف المحلي القادم إلى: $amount")
+    }
+
+    /**
+     * قراءة السقف المالي المحلي. يعيد [Int.MAX_VALUE] إذا لم يكن هناك سقف محدد.
+     */
+    fun getNextOfflineLimit(): Int {
+        val prefs = context.getSharedPreferences("AtheerSecurityPrefs", Context.MODE_PRIVATE)
+        return prefs.getInt("OFFLINE_LIMIT", Int.MAX_VALUE)
+    }
+
+    /**
+     * مسح قيد السقف المالي للعمليات اللاتلامسية.
+     */
+    fun clearOfflineLimit() {
+        val prefs = context.getSharedPreferences("AtheerSecurityPrefs", Context.MODE_PRIVATE)
+        prefs.edit().remove("OFFLINE_LIMIT").apply()
+    }
+
+    // ==================== أدوات الوصول المباشر (Getters) ====================
+
+    private fun buildTransactionJson(transactionId: String, token: String, nonce: String, amount: Long): String {
         val header = JSONObject().apply {
             put("serviceName", "ATHEER.NFC.PAYMENT")
             put("transactionId", transactionId)
@@ -310,178 +417,7 @@ class AtheerSdk private constructor(
         }.toString()
     }
 
-    /**
-     * إجراء عملية شحن عبر الشبكة الخلوية
-     *
-     * يُرسِل الرمز المميز الذي التقطه جهاز POS إلى خادم Atheer
-     * باستخدام الشبكة الخلوية حصراً عبر AtheerNetworkRouter.
-     *
-     * @param request بيانات طلب الشحن
-     * @param accessToken رمز المصادقة (Bearer Token)
-     * @return Result يحتوي على ChargeResponse عند النجاح أو Exception عند الفشل
-     */
-    suspend fun charge(request: ChargeRequest, accessToken: String): Result<ChargeResponse> {
-        Log.i(TAG, "جاري إجراء عملية شحن - المبلغ: ${request.amount} ${request.currency}")
-        return try {
-            // 1. توليد Nonce الذي يتطلبه السيرفر
-            val generatedNonce = keystoreManager.generateNonce()
-
-            val serviceDetail = JSONObject().apply {
-                put("serviceName", "ATHEER.ECOMMCASHOUT")
-            }
-            val header = JSONObject().apply {
-                put("serviceDetail", serviceDetail)
-            }
-            val bodyJson = JSONObject().apply {
-                put("amount", request.amount)
-                put("atheerToken", request.atheerToken)
-                put("nonce", generatedNonce) // <--- إضافة Nonce هنا
-                put("merchantId", request.merchantId)
-                put("currency", request.currency)
-            }
-            val body = JSONObject().apply {
-                put("header", header)
-                put("body", bodyJson)
-            }.toString()
-
-            // 2. توجيه الطلب للمسار الصحيح (api/v1/merchant/charge)
-            // 2. توجيه الطلب للمسار الصحيح (api/v1/merchant/charge)
-            // 🌟 التعديل هنا: استخدام executeStandard بدلاً من executeViaCellular
-            val responseJson = networkRouter.executeStandard(
-                "$apiBaseUrl/api/v1/merchant/charge",
-                body,
-                accessToken
-            )
-            
-            val rootJson = JSONObject(responseJson)
-            
-            // التحقق مما إذا كان الرد يحمل الهيكل البنكي (header و body)
-            if (rootJson.has("header") && rootJson.has("body")) {
-                val headerJson = rootJson.getJSONObject("header").getJSONObject("serviceDetail")
-                val bodyJson = rootJson.getJSONObject("body")
-
-                val responseCode = headerJson.optString("responseCode", "99")
-                
-                // 00 تعني قبول العملية في السيرفر
-                if (responseCode == "00") {
-                    val chargeResponse = ChargeResponse(
-                        transactionId = bodyJson.getString("transactionId"),
-                        status = bodyJson.getString("status"),
-                        message = headerJson.optString("responseMessage", "SUCCESS")
-                    )
-                    Log.i(TAG, "تمت عملية الشحن بنجاح - معرف المعاملة: ${chargeResponse.transactionId}")
-                    return Result.success(chargeResponse)
-                } else {
-                    // في حالة الرفض البنكي
-                    val errorMessage = bodyJson.optString("message", "تم رفض العملية من الخادم")
-                    throw Exception(errorMessage)
-                }
-            } else {
-                // معالجة أخطاء السيرفر المباشرة (مثل 400 أو 500 التي لا تحتوي على header)
-                val message = rootJson.optString("message", "خطأ غير معروف من الخادم")
-                throw Exception(message)
-            }
-
-        } catch (e: Exception) {
-            Log.e(TAG, "فشل عملية الشحن: ${e.message}", e)
-            Result.failure(e)
-        }
-    }
-
-    // ==================== خزنة الرموز المميزة غير المتصلة ====================
-
-    /**
-     * جلب مفاتيح الدفع غير المتصلة (Offline Tokens) من السيرفر وتخزينها محلياً
-     *
-     * @param authToken رمز المصادقة (Bearer Token) الخاص بالعميل
-     * @return Result يحتوي على عدد المفاتيح المتاحة بعد التحديث، أو خطأ في حالة الفشل
-     */
-    /**
-     * جلب مفاتيح الدفع غير المتصلة (Offline Tokens) من السيرفر وتخزينها محلياً
-     *
-     * @param authToken رمز المصادقة (Bearer Token) الخاص بالعميل
-     * @param count عدد التوكنات المطلوبة
-     * @param limit سقف الدفع لكل توكن بالريال
-     * @return Result يحتوي على عدد المفاتيح المتاحة بعد التحديث، أو خطأ في حالة الفشل
-     */
-    suspend fun fetchAndProvisionTokens(authToken: String, count: Int, limit: Long): Result<Int> {
-        return try {
-            // تمرير count و limit إلى موجه الشبكة
-            val networkResult = networkRouter.fetchOfflineTokens(apiBaseUrl, authToken, count, limit)
-
-            if (networkResult.isSuccess) {
-                val tokens = networkResult.getOrThrow()
-
-                // تخزين المفاتيح في الخزنة المشفرة
-                provisionOfflineTokens(tokens)
-
-                // إرجاع العدد المتبقي
-                Result.success(getRemainingTokensCount())
-            } else {
-                Result.failure(networkResult.exceptionOrNull() ?: Exception("خطأ غير معروف أثناء جلب المفاتيح"))
-            }
-        } catch (e: Exception) {
-            Result.failure(e)
-        }
-    }
-
-    /**
-     * تزويد خزنة الرموز بقائمة من الرموز المميزة المشفرة
-     *
-     * يجب استدعاء هذه الدالة من التطبيق المضيف عند الاتصال بالإنترنت
-     * لتخزين الرموز المميزة للاستخدام في وضع الدفع غير المتصل عبر NFC.
-     *
-     * @param tokens قائمة الرموز المميزة المشفرة
-     */
-    fun provisionOfflineTokens(tokens: List<String>) {
-        Log.i(TAG, "جاري تزويد ${tokens.size} رمز مميز غير متصل...")
-        tokenManager.provisionTokens(tokens)
-    }
-
-    /**
-     * الحصول على عدد الرموز المميزة المتبقية في الخزنة
-     *
-     * @return عدد الرموز المتبقية للاستخدام في الوضع غير المتصل
-     */
-    fun getRemainingTokensCount(): Int {
-        return tokenManager.getTokensCount()
-    }
-
-    /**
-     * الحصول على مدير مخزن المفاتيح للاستخدام المباشر
-     * للتشفير وفك التشفير وعمليات Tokenization
-     *
-     * @return كائن AtheerKeystoreManager
-     */
     fun getKeystoreManager(): AtheerKeystoreManager = keystoreManager
-
-    /**
-     * الحصول على موجه الشبكة للاستخدام المباشر
-     *
-     * @return كائن AtheerNetworkRouter
-     */
     fun getNetworkRouter(): AtheerNetworkRouter = networkRouter
-
-    /**
-     * الحصول على قاعدة البيانات للاستخدام المتقدم
-     *
-     * @return كائن AtheerDatabase
-     */
     fun getDatabase(): AtheerDatabase = database
-    // أضف هذه الدوال داخل كلاس AtheerSdk
-    fun setNextOfflineLimit(amount: Int) {
-        val prefs = context.getSharedPreferences("AtheerSecurityPrefs", Context.MODE_PRIVATE)
-        prefs.edit().putInt("OFFLINE_LIMIT", amount).apply()
-    }
-
-    fun getNextOfflineLimit(): Int {
-        val prefs = context.getSharedPreferences("AtheerSecurityPrefs", Context.MODE_PRIVATE)
-        // القيمة الافتراضية يمكن أن تكون رقماً كبيراً جداً (مفتوح) إذا لم يحدد العميل شيئاً
-        return prefs.getInt("OFFLINE_LIMIT", Int.MAX_VALUE)
-    }
-
-    fun clearOfflineLimit() {
-        val prefs = context.getSharedPreferences("AtheerSecurityPrefs", Context.MODE_PRIVATE)
-        prefs.edit().remove("OFFLINE_LIMIT").apply()
-    }
 }
