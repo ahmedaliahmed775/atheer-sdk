@@ -20,8 +20,8 @@ android {
 
     buildTypes {
         release {
-            // تفعيل تصغير الكود في نسخة الإصدار لتقليل حجم الـ AAR
-            isMinifyEnabled = false
+            // ✅ تم التعديل أمنياً: تفعيل تصغير وتشويش الكود لمنع الهندسة العكسية
+            isMinifyEnabled = true 
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -41,8 +41,6 @@ android {
         jvmTarget = "17"
     }
 
-    // --- الإضافة الأولى (إلزامية للإصدارات الحديثة) ---
-    // إجبار الأندرويد على تجهيز نسخة release لكي يتعرف عليها Gradle في النشر
     publishing {
         singleVariant("release") {
             withSourcesJar()
@@ -58,22 +56,33 @@ dependencies {
     // مكتبة Coroutines لدعم البرمجة غير المتزامنة
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 
-    // مكتبة Room لقاعدة البيانات المحلية مع تشفير على مستوى الحقول
+    // ✅ التعديل الأمني: إضافة مكتبة Security Crypto لتشفير SharedPreferences
+    implementation("androidx.security:security-crypto:1.1.0-alpha06")
+
+    // ✅ التعديل المعماري: إضافة WorkManager للمزامنة في الخلفية (Background Sync)
+    implementation("androidx.work:work-runtime-ktx:2.9.0")
+
+    // مكتبة Room لقاعدة البيانات المحلية
     implementation("androidx.room:room-runtime:2.6.1")
     implementation("androidx.room:room-ktx:2.6.1")
     ksp("androidx.room:room-compiler:2.6.1")
+    
+    // ✅ التعديل الأمني (PCI-DSS): إضافة SQLCipher لتشفير قاعدة البيانات بالكامل
+    implementation("net.zetetic:android-database-sqlcipher:4.5.4")
+    implementation("androidx.sqlite:sqlite-ktx:2.4.0")
+
+    // مكتبة Gson لمعالجة JSON
+    implementation("com.google.code.gson:gson:2.10.1")
 
     // مكتبات الاختبار
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.mockito:mockito-core:5.11.0")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
-    implementation("com.google.code.gson:gson:2.10.1")
 }
 
 // ==========================================
-// كود النشر
+// كود النشر (Publishing)
 // ==========================================
-// تغليف الكود بـ afterEvaluate واحدة فقط لضمان انتهاء تهيئة الأندرويد أولاً
 afterEvaluate {
     publishing {
         publications {
