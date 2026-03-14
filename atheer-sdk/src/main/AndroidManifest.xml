@@ -1,52 +1,49 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!--
-    ملف AndroidManifest.xml لمكتبة Atheer SDK
-    يحتوي على إعلانات الخدمات والصلاحيات اللازمة لعمل المكتبة
--->
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.atheer.sdk">
 
-    <!-- صلاحية الوصول إلى NFC للقراءة والكتابة -->
+    <!-- تصاريح NFC الضرورية للمدفوعات اللاتلامسية -->
     <uses-permission android:name="android.permission.NFC" />
+    <uses-feature android:name="android.hardware.nfc.hce" android:required="true" />
 
-    <!-- صلاحية الوصول إلى الإنترنت لتوجيه طلبات الشبكة -->
+    <!-- تصاريح الشبكة الخلوية الإجبارية لـ Atheer SDK -->
     <uses-permission android:name="android.permission.INTERNET" />
-
-    <!-- صلاحية الوصول إلى معلومات حالة الشبكة -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-
-    <!-- صلاحية تغيير حالة الشبكة لتوجيه الطلبات عبر الشبكة الخلوية -->
     <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
-
-    <!-- ميزة NFC مطلوبة للجهاز (غير إلزامية - تعمل المكتبة بدونها إن لم تكن متاحة) -->
-    <uses-feature
-        android:name="android.hardware.nfc"
-        android:required="false" />
-
-    <!-- ميزة NFC-HCE مطلوبة لمحاكاة البطاقة (غير إلزامية) -->
-    <uses-feature
-        android:name="android.hardware.nfc.hce"
-        android:required="false" />
 
     <application>
         <!--
-            خدمة HCE - محاكاة بطاقة NFC للمدفوعات بدون إنترنت
-            يجب أن تكون هذه الخدمة مُصدَّرة حتى يتمكن نظام Android من استدعائها
-            عند الاقتراب من جهاز قارئ NFC
+            خدمة HCE الرئيسية - محاكاة البطاقة المضيفة
+            تم ضبطها لتكون خدمة دفع (Payment Service) رسمية
         -->
         <service
-            android:name="com.atheer.sdk.hce.AtheerApduService"
+            android:name=".hce.AtheerApduService"
             android:exported="true"
+            android:label="@string/atheer_payment_service_label"
             android:permission="android.permission.BIND_NFC_SERVICE">
             <intent-filter>
-                <!-- هذا الفلتر يخبر النظام أن الخدمة تدعم محاكاة بطاقة NFC -->
                 <action android:name="android.nfc.cardemulation.action.HOST_APDU_SERVICE" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
-            <!-- ملف XML الذي يصف AIDs (معرفات التطبيق) المدعومة -->
+
             <meta-data
                 android:name="android.nfc.cardemulation.host_apdu_service"
                 android:resource="@xml/apduservice" />
         </service>
-    </application>
 
+        <!--
+            إضافة نشاط (Activity) للإعدادات أو للمعلومات - اختياري لكنه مفضل
+            ليتمكن المستخدم من الوصول لإعدادات الدفع الخاصة بـ Atheer
+        -->
+        <activity
+            android:name=".AtheerPaymentSettingsActivity"
+            android:exported="true"
+            android:label="إعدادات دفع Atheer">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.PAYMENT_SETTINGS" />
+            </intent-filter>
+        </activity>
+
+    </application>
 </manifest>
