@@ -3,7 +3,7 @@ plugins {
     id("com.android.library")
     id("org.jetbrains.kotlin.android")
     id("com.google.devtools.ksp")
-    id("maven-publish")
+    id("maven-publish") // إضافة النشر
 }
 
 android {
@@ -18,8 +18,11 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = true 
-            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            isMinifyEnabled = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
         }
     }
 
@@ -31,6 +34,14 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+
+    // ✅ يجب إضافة هذا البلوك لتجهيز نسخة الـ Release للنشر
+    publishing {
+        singleVariant("release") {
+            withSourcesJar()
+            withJavadocJar()
+        }
+    }
 }
 
 dependencies {
@@ -38,12 +49,12 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
     implementation("androidx.work:work-runtime-ktx:2.9.0")
-    
+
     // Room
     implementation("androidx.room:room-runtime:2.6.1")
     implementation("androidx.room:room-ktx:2.6.1")
     ksp("androidx.room:room-compiler:2.6.1")
-    
+
     // SQLCipher
     implementation("net.zetetic:android-database-sqlcipher:4.5.4")
     implementation("androidx.sqlite:sqlite-ktx:2.4.0")
@@ -58,4 +69,34 @@ dependencies {
 
     // Test
     testImplementation("junit:junit:4.13.2")
+}
+
+// ==========================================
+// ✅ إعدادات النشر (Publishing) إلى GitHub Packages
+// ==========================================
+afterEvaluate {
+    publishing {
+        publications {
+            create<MavenPublication>("release") {
+                // جلب المكون الذي تم تجهيزه داخل بلوك android
+                from(components["release"])
+
+                groupId = "com.github.ahmedaliahmed775"
+                artifactId = "atheer-sdk"
+                // جلب الإصدار من GitHub Actions أو استخدام قيمة افتراضية
+                version = System.getenv("SDK_VERSION") ?: "1.0.0"
+            }
+        }
+
+        repositories {
+            maven {
+                name = "GitHubPackages"
+                url = uri("https://maven.pkg.github.com/ahmedaliahmed775/atheer-sdk")
+                credentials {
+                    username = System.getenv("GITHUB_ACTOR")
+                    password = System.getenv("GITHUB_TOKEN")
+                }
+            }
+        }
+    }
 }
