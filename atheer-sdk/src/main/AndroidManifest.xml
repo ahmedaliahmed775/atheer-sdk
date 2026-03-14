@@ -1,21 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.atheer.sdk">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- تصاريح NFC الضرورية للمدفوعات اللاتلامسية -->
     <uses-permission android:name="android.permission.NFC" />
     <uses-feature android:name="android.hardware.nfc.hce" android:required="true" />
 
-    <!-- تصاريح الشبكة الخلوية الإجبارية لـ Atheer SDK -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
 
     <application>
-        <!--
-            خدمة HCE الرئيسية - محاكاة البطاقة المضيفة
-            تم ضبطها لتكون خدمة دفع (Payment Service) رسمية
-        -->
         <service
             android:name=".hce.AtheerApduService"
             android:exported="true"
@@ -31,10 +24,6 @@
                 android:resource="@xml/apduservice" />
         </service>
 
-        <!--
-            إضافة نشاط (Activity) للإعدادات أو للمعلومات - اختياري لكنه مفضل
-            ليتمكن المستخدم من الوصول لإعدادات الدفع الخاصة بـ Atheer
-        -->
         <activity
             android:name=".AtheerPaymentSettingsActivity"
             android:exported="true"
