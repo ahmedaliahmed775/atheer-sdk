@@ -3,6 +3,8 @@ package com.atheer.sdk.security
 import android.content.Context
 import android.content.SharedPreferences
 import android.util.Log
+import androidx.security.crypto.EncryptedSharedPreferences
+import androidx.security.crypto.MasterKey
 
 /**
  * مدير خزنة الرموز المميزة غير المتصلة (Offline Token Vault) لـ Atheer SDK
@@ -10,36 +12,50 @@ import android.util.Log
  * تتولى هذه الفئة إدارة الرموز المميزة المُزوَّدة مسبقاً (Pre-provisioned Tokens)
  * التي يوفرها التطبيق المضيف عندما يكون الجهاز متصلاً بالإنترنت.
  *
- * آلية العمل (مشابهة لنظام Apple Pay للرموز غير المتصلة):
- * 1. يقوم التطبيق المضيف بتزويد الرموز عبر `provisionTokens()` عند الاتصال بالإنترنت
- * 2. عند الدفع بدون إنترنت، تستهلك خدمة HCE رمزاً واحداً عبر `consumeNextToken()`
- * 3. الرمز المُستهلَك يُحذف تلقائياً ولا يمكن إعادة استخدامه
+ * التحديث الأمني (PCI-DSS Compliance):
+ * 1. التخزين المشفر: تستخدم EncryptedSharedPreferences لتشفير الرموز لمنع سرقتها.
+ * 2. انتهاء الصلاحية: كل رمز يمتلك مدة صلاحية (7 أيام) لمنع استخدام رموز قديمة جداً.
  *
- * التخزين: يتم تخزين الرموز في SharedPreferences مع تسلسل JSON بسيط.
- *
- * @param context سياق التطبيق للوصول إلى SharedPreferences
+ * @param context سياق التطبيق للوصول إلى بيئة التشفير
  */
 class AtheerTokenManager(context: Context) {
 
     companion object {
         private const val TAG = "AtheerTokenManager"
-        private const val PREFS_NAME = "atheer_token_vault"
+        // تغيير اسم الملف لتجنب التعارض مع الملف القديم غير المشفر
+        private const val PREFS_NAME = "atheer_token_vault_secure"
         private const val KEY_TOKENS = "offline_tokens"
-        private const val TOKEN_SEPARATOR = "\u001F" // Unit Separator - safe for encrypted/base64 tokens
+        private const val TOKEN_SEPARATOR = "\u001F" // Unit Separator
+        
+        // مدة صلاحية الرمز (7 أيام بالمللي ثانية)
+        private const val SEVEN_DAYS_MS = 7L * 24 * 60 * 60 * 1000
     }
 
-    private val prefs: SharedPreferences =
-        context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    private val prefs: SharedPreferences
+
+    init {
+        // تهيئة MasterKey لتشفير البيانات محلياً عبر Android Keystore
+        val masterKey = MasterKey.Builder(context.applicationContext)
+            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+            .build()
+
+        // استخدام EncryptedSharedPreferences بدلاً من SharedPreferences العادية (تشفير Data at Rest)
+        prefs = EncryptedSharedPreferences.create(
+            context.applicationContext,
+            PREFS_NAME,
+            masterKey,
+            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+        )
+    }
 
     /**
-     * تزويد خزنة الرموز بقائمة من الرموز المميزة المشفرة
+     * تزويد خزنة الرموز بقائمة من الرموز المميزة المشفرة.
      *
      * يتم استدعاء هذه الدالة من التطبيق المضيف عند الاتصال بالإنترنت
      * لتخزين الرموز المميزة للاستخدام في الوضع غير المتصل.
      *
-     * الرموز الجديدة تُضاف إلى الرموز الموجودة مسبقاً (لا تستبدلها).
-     *
-     * @param tokens قائمة الرموز المميزة المشفرة المراد تخزينها
+     * @param tokens قائمة الرموز المميزة المراد تخزينها
      */
     fun provisionTokens(tokens: List<String>) {
         if (tokens.isEmpty()) {
@@ -48,47 +64,63 @@ class AtheerTokenManager(context: Context) {
         }
         synchronized(this) {
             val existing = loadTokens().toMutableList()
-            existing.addAll(tokens)
+            
+            // ✅ إضافة الطابع الزمني المحلي وقت حفظ الرمز
+            val currentTime = System.currentTimeMillis()
+            val tokensWithTime = tokens.map { "$it|$currentTime" }
+            
+            existing.addAll(tokensWithTime)
             saveTokens(existing)
-            Log.i(TAG, "تم تزويد ${tokens.size} رمز مميز - الإجمالي الحالي: ${existing.size}")
+            Log.i(TAG, "تم تزويد ${tokens.size} رمز مميز مشفر - الإجمالي الحالي: ${existing.size}")
         }
     }
 
     /**
-     * استهلاك الرمز المميز التالي من الخزنة
+     * استهلاك الرمز المميز التالي من الخزنة لعملية دفع (NFC/HCE).
      *
-     * يُستخدَم هذا الأسلوب من خدمة HCE عند الدفع بدون إنترنت.
-     * يأخذ الرمز الأول من القائمة ويحذفه نهائياً لمنع إعادة الاستخدام.
+     * يقوم بفحص القائمة، ويتجاهل ويحذف أي رمز انتهت صلاحيته (أقدم من 7 أيام).
      *
-     * @return الرمز المميز التالي أو null إذا كانت الخزنة فارغة
+     * @return الرمز المميز الصالح التالي أو null إذا كانت الخزنة فارغة أو الرموز منتهية الصلاحية
      */
     fun consumeNextToken(): String? {
         synchronized(this) {
             val tokens = loadTokens().toMutableList()
-            if (tokens.isEmpty()) {
-                Log.w(TAG, "خزنة الرموز فارغة - لا توجد رموز متاحة للاستهلاك")
-                return null
+            val currentTime = System.currentTimeMillis()
+
+            while (tokens.isNotEmpty()) {
+                val tokenEntry = tokens.removeAt(0)
+                
+                // فصل الرمز الفعلي عن الطابع الزمني
+                val parts = tokenEntry.split("|")
+                val actualToken = parts[0]
+                val timeAdded = parts.getOrNull(1)?.toLongOrNull() ?: 0L
+
+                // ✅ التحقق مما إذا كان الرمز صالحاً (لم يمر عليه الوقت المحدد)
+                if (currentTime - timeAdded <= SEVEN_DAYS_MS) {
+                    saveTokens(tokens)
+                    Log.i(TAG, "تم استهلاك رمز مميز - الرموز المتبقية: ${tokens.size}")
+                    return actualToken
+                } else {
+                    // الرمز منتهي الصلاحية، سيتم تجاهله (وحذفه كونه تم عمل removeAt له بالفعل)
+                    Log.w(TAG, "تم تجاهل وحذف رمز منتهي الصلاحية.")
+                }
             }
-            val token = tokens.removeAt(0)
-            saveTokens(tokens)
-            Log.i(TAG, "تم استهلاك رمز مميز - الرموز المتبقية: ${tokens.size}")
-            return token
+            
+            Log.w(TAG, "خزنة الرموز فارغة أو أن جميع الرموز كانت منتهية الصلاحية")
+            saveTokens(tokens) // حفظ القائمة فارغة
+            return null
         }
     }
 
     /**
      * الحصول على عدد الرموز المميزة المتبقية في الخزنة
-     *
-     * @return عدد الرموز المتبقية
      */
     fun getTokensCount(): Int {
         return loadTokens().size
     }
 
     /**
-     * تحميل الرموز المميزة من التخزين المحلي
-     *
-     * @return قائمة الرموز المخزنة
+     * تحميل الرموز المميزة من التخزين المشفر
      */
     private fun loadTokens(): List<String> {
         val raw = prefs.getString(KEY_TOKENS, null) ?: return emptyList()
@@ -97,9 +129,7 @@ class AtheerTokenManager(context: Context) {
     }
 
     /**
-     * حفظ قائمة الرموز المميزة في التخزين المحلي
-     *
-     * @param tokens قائمة الرموز المراد حفظها
+     * حفظ قائمة الرموز المميزة في التخزين المشفر
      */
     private fun saveTokens(tokens: List<String>) {
         val raw = if (tokens.isEmpty()) "" else tokens.joinToString(TOKEN_SEPARATOR)
