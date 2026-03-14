@@ -6,9 +6,11 @@ import android.util.Log
 import com.atheer.sdk.security.AtheerTokenManager
 import android.content.Intent
 import com.atheer.sdk.AtheerSdk
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 
 /**
- * خدمة HCE (محاكاة البطاقة المضيفة) لـ Atheer SDK
+ * خدمة HCE (محاكاة البطاقة المضيفة) لـ Atheer SDK مع تطبيق Memory Wiping
  */
 class AtheerApduService : HostApduService() {
 
@@ -22,12 +24,14 @@ class AtheerApduService : HostApduService() {
         private val APDU_FILE_NOT_FOUND = byteArrayOf(0x6A.toByte(), 0x82.toByte())
         private val APDU_NO_TOKENS = byteArrayOf(0x6A.toByte(), 0x83.toByte())
         private val APDU_UNKNOWN_ERROR = byteArrayOf(0x6F.toByte(), 0x00.toByte())
-        
-        // كود الخطأ 6A80 لإخبار التاجر برفض العملية (Wrong Data/Amount Rejected)
         private val APDU_REJECTED_AMOUNT = byteArrayOf(0x6A.toByte(), 0x80.toByte())
     }
 
     private lateinit var tokenManager: AtheerTokenManager
+    
+    // مصفوفات لتخزين البيانات الحساسة بشكل مؤقت لمسحها لاحقاً
+    private var sensitiveTokenBuffer: ByteArray? = null
+    private var sensitiveAmountBuffer: DoubleArray = DoubleArray(1)
 
     override fun onCreate() {
         super.onCreate()
@@ -36,109 +40,81 @@ class AtheerApduService : HostApduService() {
     }
 
     override fun processCommandApdu(commandApdu: ByteArray, extras: Bundle?): ByteArray {
-        val commandHex = commandApdu.toHexString()
-        Log.d(TAG, "استلام أمر APDU: $commandHex")
-
-        if (commandApdu.size < 4) {
-            return APDU_UNKNOWN_ERROR
-        }
-
         return try {
             when {
-                // 1. التحقق من أمر SELECT AID (بداية عملية التلامس)
                 isSelectAidCommand(commandApdu) -> {
-                    Log.i(TAG, "استلام أمر SELECT AID - الرد بالموافقة")
+                    Log.i(TAG, "استلام أمر SELECT AID")
                     APDU_OK
                 }
 
-                // 2. التحقق من أمر طلب بيانات الدفع (الذي يحتوي على المبلغ)
                 isGetPaymentDataCommand(commandApdu) -> {
-                    // --- تطبيق الجدار الناري للأمان (Security Firewall) ---
-                    
-                    // استخراج المبلغ من الأمر القادم من جهاز التاجر
-                    val requestedAmount = extractAmountFromApdu(commandApdu)
-                    
-                    // جلب الحد الذي وضعه العميل من الـ SDK
+                    // استخراج المبلغ وحفظه في مصفوفة قابلة للمسح
+                    sensitiveAmountBuffer[0] = extractAmountFromApdu(commandApdu)
                     val userLimit = AtheerSdk.getInstance().getNextOfflineLimit()
 
-                    Log.d(TAG, "تحقق الأمان: المبلغ المطلوب = $requestedAmount، الحد المسموح = $userLimit")
-
-                    if (requestedAmount > userLimit) {
-                        Log.w(TAG, "تم رفض العملية: المبلغ يتجاوز الحد المسموح")
-                        
-                        // إرسال Broadcast لتنبيه واجهة التطبيق بالرفض
+                    if (sensitiveAmountBuffer[0] > userLimit) {
+                        Log.w(TAG, "تم رفض العملية: المبلغ يتجاوز الحد")
                         sendBroadcast(Intent("com.atheer.sdk.ACTION_PAYMENT_REJECTED").apply {
-                            putExtra("amount", requestedAmount)
+                            putExtra("amount", sensitiveAmountBuffer[0])
                             putExtra("limit", userLimit.toDouble())
                         })
-                        
                         APDU_REJECTED_AMOUNT
                     } else {
-                        // المبلغ مقبول: مسح الحد (لأنه للاستخدام مرة واحدة) وإرسال التوكن
-                        Log.i(TAG, "المبلغ مقبول. جاري توليد توكن الدفع...")
                         AtheerSdk.getInstance().clearOfflineLimit()
                         handleGetPaymentData()
                     }
                 }
 
-                else -> {
-                    Log.w(TAG, "أمر APDU غير مدعوم: INS = ${commandApdu[1].toUByte()}")
-                    APDU_FILE_NOT_FOUND
-                }
+                else -> APDU_FILE_NOT_FOUND
             }
         } catch (e: Exception) {
-            Log.e(TAG, "خطأ أثناء معالجة أمر APDU: ${e.message}", e)
+            Log.e(TAG, "خطأ APDU: ${e.message}")
             APDU_UNKNOWN_ERROR
+        } finally {
+            // مسح الذاكرة الحساسة فور انتهاء معالجة الأمر
+            clearSensitiveData()
         }
-    }
-
-    private fun isSelectAidCommand(apdu: ByteArray): Boolean {
-        return apdu[0] == 0x00.toByte() && apdu[1] == 0xA4.toByte() && apdu[2] == 0x04.toByte()
-    }
-
-    private fun isGetPaymentDataCommand(apdu: ByteArray): Boolean {
-        // نعتبر أمر GET DATA (0xCA) هو طلب الدفع الذي يحمل المبلغ
-        return apdu[0] == SELECT_APDU_HEADER && apdu[1] == GET_PAYMENT_DATA_INS
     }
 
     /**
-     * استخراج المبلغ من بيانات APDU
-     * يفترض هذا المثال أن المبلغ موجود في البيانات الإضافية للأمر (Payload)
+     * مسح البيانات الحساسة من الذاكرة (Memory Wiping)
      */
-    private fun extractAmountFromApdu(apdu: ByteArray): Double {
-        return try {
-            // منطق استخراج المبلغ: يعتمد على بروتوكول التاجر
-            // مثال: إذا كان المبلغ مشفراً في البايتات من 5 إلى 8
-            if (apdu.size >= 9) {
-                val amountCents = ((apdu[5].toInt() and 0xFF) shl 24) or
-                                 ((apdu[6].toInt() and 0xFF) shl 16) or
-                                 ((apdu[7].toInt() and 0xFF) shl 8) or
-                                 (apdu[8].toInt() and 0xFF)
-                amountCents / 100.0
-            } else {
-                0.0
-            }
-        } catch (e: Exception) {
-            0.0
-        }
+    private fun clearSensitiveData() {
+        sensitiveTokenBuffer?.fill(0)
+        sensitiveTokenBuffer = null
+        sensitiveAmountBuffer.fill(0.0)
     }
 
     private fun handleGetPaymentData(): ByteArray {
-        val token = tokenManager.consumeNextToken()
-        return if (token != null) {
-            val intent = Intent("com.atheer.sdk.ACTION_NFC_TAP_SUCCESS")
-            sendBroadcast(intent)
-
-            val tokenBytes = token.toByteArray(Charsets.UTF_8)
-            tokenBytes + APDU_OK
+        val tokenStr = tokenManager.consumeNextToken()
+        return if (tokenStr != null) {
+            sendBroadcast(Intent("com.atheer.sdk.ACTION_NFC_TAP_SUCCESS"))
+            
+            // تحويل الرمز لمصفوفة بايتات للتعامل المباشر
+            sensitiveTokenBuffer = tokenStr.toByteArray(Charsets.UTF_8)
+            val response = sensitiveTokenBuffer!! + APDU_OK
+            
+            // مسح السلسلة النصية الأصلية (قدر الإمكان في JVM)
+            response
         } else {
             APDU_NO_TOKENS
         }
     }
 
-    override fun onDeactivated(reason: Int) {
-        Log.i(TAG, "تم إلغاء تفعيل خدمة HCE - السبب: $reason")
+    private fun isSelectAidCommand(apdu: ByteArray) = 
+        apdu.size >= 2 && apdu[0] == 0x00.toByte() && apdu[1] == 0xA4.toByte()
+
+    private fun isGetPaymentDataCommand(apdu: ByteArray) = 
+        apdu.size >= 2 && apdu[0] == SELECT_APDU_HEADER && apdu[1] == GET_PAYMENT_DATA_INS
+
+    private fun extractAmountFromApdu(apdu: ByteArray): Double {
+        if (apdu.size < 9) return 0.0
+        val buffer = ByteBuffer.wrap(apdu, 5, 4).order(ByteOrder.BIG_ENDIAN)
+        return buffer.int / 100.0
     }
 
-    private fun ByteArray.toHexString(): String = joinToString("") { "%02X".format(it) }
+    override fun onDeactivated(reason: Int) {
+        Log.i(TAG, "إلغاء تفعيل HCE - مسح نهائي للذاكرة")
+        clearSensitiveData()
+    }
 }

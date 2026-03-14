@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- حماية مستوى النطاق لمنع هجمات MITM وضمان التشفير -->
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">api.atheer.com</domain>
+
+        <!-- تثبيت الشهادة (Certificate Pinning) كطبقة حماية ثانية في نظام التشغيل -->
+        <pin-set expiration="2025-12-31">
+            <!-- ملاحظة: هذه البصمة مثال، يجب استبدالها ببصمة الشهادة الفعلية (SHA-256) -->
+            <pin digest="SHA-256">7HIpSrxNzqQOK6hzZcl8N0VYRsqDx9Le5tpx3468AlA=</pin>
+            <pin digest="SHA-256">Af8uCAY87z1S9x10G95F63YvX1D4v10G95F63YvX1D4=</pin>
+        </pin-set>
+    </domain-config>
+
+    <!-- منع حركة المرور غير المشفرة (HTTP) لجميع النطاقات الأخرى -->
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

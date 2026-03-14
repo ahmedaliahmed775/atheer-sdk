@@ -2,182 +2,95 @@ package com.atheer.sdk.network
 
 import android.content.Context
 import android.net.ConnectivityManager
-import android.net.Network
 import android.net.NetworkCapabilities
-import android.net.NetworkRequest
 import android.util.Log
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
-import java.io.IOException
-import java.net.URL
-import javax.net.ssl.HttpsURLConnection
-import kotlin.coroutines.resume
-import com.google.gson.Gson
 import com.atheer.sdk.model.TokensResponse
+import com.google.gson.Gson
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import okhttp3.*
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
+import java.io.IOException
+import java.util.concurrent.TimeUnit
 
 /**
- * موجه الشبكة الخاص بمكتبة Atheer SDK.
- *
- * مسؤول عن جميع الاتصالات مع خوادم Atheer، ويوفر ميزات متقدمة مثل:
- * 1. توجيه الاتصال إجبارياً عبر الشبكة الخلوية (Cellular Data) لتقليل الاعتماد على Wi-Fi التاجر.
- * 2. آلية التراجع (Fallback) الذكية لاستخدام Wi-Fi كخيار بديل عند غياب الشبكة الخلوية.
- * 3. قراءة استجابات الخطأ (Error Streams) لمنع انهيار التطبيق عند الرفض البنكي.
+ * موجه الشبكة المطور لـ Atheer SDK باستخدام OkHttp و Certificate Pinning
  */
 class AtheerNetworkRouter(private val context: Context) {
 
     companion object {
         private const val TAG = "AtheerNetworkRouter"
-        private const val CELLULAR_NETWORK_TIMEOUT_MS = 10_000L // 10 ثوانٍ للبحث عن شبكة خلوية
-        private const val REQUEST_TIMEOUT_MS = 30_000L // 30 ثانية لتنفيذ الطلب
+        private const val BASE_DOMAIN = "api.atheer.com"
+        
+        // الوسائط المستخدمة لطلبات JSON
+        private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
     }
 
-    private val connectivityManager =
-        context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+    // 1. إعداد Certificate Pinning لمنع هجمات MITM
+    private val certificatePinner = CertificatePinner.Builder()
+        .add(BASE_DOMAIN, "sha256/7HIpSrxNzqQOK6hzZcl8N0VYRsqDx9Le5tpx3468AlA=")
+        .add(BASE_DOMAIN, "sha256/Af8uCAY87z1S9x10G95F63YvX1D4v10G95F63YvX1D4=")
+        .build()
+
+    // 2. إعداد OkHttpClient مع قيود TLS 1.2+
+    private val client: OkHttpClient by lazy {
+        val spec = ConnectionSpec.Builder(ConnectionSpec.MODERN_TLS)
+            .tlsVersions(TlsVersion.TLS_1_2, TlsVersion.TLS_1_3)
+            .build()
+
+        OkHttpClient.Builder()
+            .certificatePinner(certificatePinner)
+            .connectionSpecs(listOf(spec))
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .writeTimeout(30, TimeUnit.SECONDS)
+            .build()
+    }
+
+    private val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
 
     /**
-     * تنفيذ طلب شبكة باستخدام الشبكة الافتراضية للجهاز (Wi-Fi أو الخلوية أيهما متاح).
+     * تنفيذ طلب شبكة آمن باستخدام OkHttp
      */
     suspend fun executeStandard(
         urlString: String,
         requestBody: String? = null,
         accessToken: String? = null
     ): String = withContext(Dispatchers.IO) {
-        val url = URL(urlString)
-        val connection = url.openConnection() as HttpsURLConnection
-        try {
-            connection.apply {
-                connectTimeout = 15_000
-                readTimeout = 15_000
-                setRequestProperty("Content-Type", "application/json; charset=UTF-8")
-                setRequestProperty("Accept", "application/json")
-                if (accessToken != null) setRequestProperty("Authorization", "Bearer $accessToken")
-                if (requestBody != null) {
-                    requestMethod = "POST"
-                    doOutput = true
-                    outputStream.use { it.write(requestBody.toByteArray(Charsets.UTF_8)) }
-                } else {
-                    requestMethod = "GET"
-                }
-            }
+        val requestBuilder = Request.Builder().url(urlString)
+        
+        // إضافة الترويسات (Headers)
+        requestBuilder.addHeader("Accept", "application/json")
+        accessToken?.let { requestBuilder.addHeader("Authorization", "Bearer $it") }
 
-            // قراءة الرسائل في حالة النجاح وفي حالة الخطأ (مثل 400 - الرفض البنكي)
-            if (connection.responseCode in 200..299) {
-                connection.inputStream.bufferedReader().use { it.readText() }
-            } else {
-                val errorStream = connection.errorStream
-                if (errorStream != null) {
-                    // إرجاع تفاصيل الخطأ القادمة من السيرفر بصيغة JSON ليتمكن SDK من قراءتها
-                    errorStream.bufferedReader().use { it.readText() }
-                } else {
-                    throw IOException("HTTP Error: ${connection.responseCode}")
-                }
-            }
-        } finally {
-            connection.disconnect()
+        // تحديد نوع الطلب (POST أو GET)
+        if (requestBody != null) {
+            requestBuilder.post(requestBody.toRequestBody(JSON_MEDIA_TYPE))
+        } else {
+            requestBuilder.get()
         }
-    }
 
-    /**
-     * تنفيذ طلب شبكة إجبارياً عبر بيانات الهاتف (Cellular).
-     *
-     * 🌟 تم إضافة آلية التراجع (Fallback): إذا لم تتوفر شبكة خلوية،
-     * سيتم التراجع بسلاسة واستخدام الشبكة الافتراضية (مثل Wi-Fi).
-     */
-    suspend fun executeViaCellular(
-        urlString: String,
-        requestBody: String? = null,
-        accessToken: String? = null
-    ): String = withContext(Dispatchers.IO) {
+        val request = requestBuilder.build()
+
         try {
-            // محاولة الحصول على شبكة خلوية حصرية
-            val cellularNetwork = withTimeoutOrNull(CELLULAR_NETWORK_TIMEOUT_MS) {
-                getCellularNetwork()
-            } ?: throw IOException("الشبكة الخلوية غير متاحة حالياً.")
-
-            // تنفيذ الطلب عبر الشبكة الخلوية
-            return@withContext withTimeoutOrNull(REQUEST_TIMEOUT_MS) {
-                executeOnNetwork(cellularNetwork, urlString, requestBody, accessToken)
-            } ?: throw IOException("انتهت مهلة الطلب عبر الشبكة الخلوية.")
-            
+            client.newCall(request).execute().use { response ->
+                val body = response.body?.string() ?: ""
+                if (response.isSuccessful) {
+                    body
+                } else {
+                    // إرجاع جسم الخطأ كما هو ليتم تحليله في المستويات الأعلى (مثل الرفض البنكي)
+                    if (body.isNotEmpty()) body else throw IOException("Unexpected code $response")
+                }
+            }
         } catch (e: Exception) {
-            // ✅ آلية التراجع (Fallback): فشل الاتصال الخلوي، التراجع لاستخدام Wi-Fi
-            Log.w(TAG, "فشل الاتصال الخلوي (${e.message}). جاري التراجع لاستخدام شبكة Wi-Fi/الافتراضية...")
-            return@withContext executeStandard(urlString, requestBody, accessToken)
+            Log.e(TAG, "فشل طلب الشبكة الآمن: ${e.message}")
+            throw e
         }
     }
 
     /**
-     * البحث عن شبكة خلوية نشطة وجلب كائن Network الخاص بها.
-     */
-    private suspend fun getCellularNetwork(): Network = suspendCancellableCoroutine { continuation ->
-        val networkRequest = NetworkRequest.Builder()
-            .addTransportType(NetworkCapabilities.TRANSPORT_CELLULAR)
-            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-            .build()
-
-        val callback = object : ConnectivityManager.NetworkCallback() {
-            override fun onAvailable(network: Network) {
-                try {
-                    connectivityManager.unregisterNetworkCallback(this)
-                } catch (e: Exception) { /* تجاهل الخطأ في حالة تم الإلغاء مسبقاً */ }
-                
-                if (continuation.isActive) {
-                    continuation.resume(network)
-                }
-            }
-        }
-
-        // الحماية من تسرب الذاكرة (Memory Leak) في حال انتهاء المهلة (Timeout) قبل إيجاد الشبكة
-        continuation.invokeOnCancellation {
-            try {
-                connectivityManager.unregisterNetworkCallback(callback)
-            } catch (e: Exception) { /* تجاهل */ }
-        }
-
-        connectivityManager.requestNetwork(networkRequest, callback)
-    }
-
-    /**
-     * تنفيذ الطلب على كائن شبكة (Network) محدد مسبقاً.
-     */
-    private fun executeOnNetwork(network: Network, url: String, body: String?, token: String?): String {
-        // ربط الاتصال بالشبكة المحددة (الخلوية)
-        val connection = network.openConnection(URL(url)) as HttpsURLConnection
-        try {
-            connection.apply {
-                connectTimeout = 15_000
-                readTimeout = 15_000
-                setRequestProperty("Content-Type", "application/json; charset=UTF-8")
-                if (token != null) setRequestProperty("Authorization", "Bearer $token")
-                if (body != null) {
-                    requestMethod = "POST"
-                    doOutput = true
-                    outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
-                } else {
-                    requestMethod = "GET"
-                }
-            }
-            
-            // قراءة الرسائل بناءً على كود الاستجابة
-            if (connection.responseCode in 200..299) {
-                return connection.inputStream.bufferedReader().use { it.readText() }
-            } else {
-                val errorStream = connection.errorStream
-                if (errorStream != null) {
-                    return errorStream.bufferedReader().use { it.readText() }
-                } else {
-                    throw IOException("HTTP Error: ${connection.responseCode}")
-                }
-            }
-        } finally { 
-            connection.disconnect() 
-        }
-    }
-
-    /**
-     * التحقق السريع مما إذا كان الجهاز متصلاً بأي شبكة إنترنت.
+     * التحقق من توفر الإنترنت بطريقة متوافقة مع Android 7.0 (API 24) وما فوق
      */
     fun isNetworkAvailable(): Boolean {
         val network = connectivityManager.activeNetwork ?: return false
@@ -186,26 +99,26 @@ class AtheerNetworkRouter(private val context: Context) {
     }
 
     /**
-     * جلب رموز الدفع اللاتلامسي من السيرفر.
+     * جلب رموز الدفع اللاتلامسي
      */
     suspend fun fetchOfflineTokens(apiBaseUrl: String, authToken: String, count: Int, limit: Long): Result<List<String>> {
         return try {
             val url = "$apiBaseUrl/api/v1/wallet/offline-tokens"
-            val requestBody = org.json.JSONObject().apply {
+            val json = org.json.JSONObject().apply {
                 put("count", count)
                 put("limit", limit)
             }.toString()
 
-            val responseStr = executeStandard(url, requestBody, authToken)
+            val responseStr = executeStandard(url, json, authToken)
             val response = Gson().fromJson(responseStr, TokensResponse::class.java)
 
             if (response?.success == true && response.data?.tokens != null) {
                 Result.success(response.data.tokens)
             } else {
-                Result.failure(Exception(response?.message ?: "فشل في جلب الرموز من السيرفر"))
+                Result.failure(Exception(response?.message ?: "فشل استلام الرموز"))
             }
-        } catch (e: Exception) { 
-            Result.failure(e) 
+        } catch (e: Exception) {
+            Result.failure(e)
         }
     }
 }
