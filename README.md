@@ -1,7 +1,7 @@
 # Atheer SDK: معالجة دفع آمنة وسلسة لنظام Android
 
 ![حالة البناء](https://img.shields.io/badge/build-passing-brightgreen)
-![الترخيص](https://img.shields.io/badge/license-MIT-blue)
+![الترخيص](https://img.shields.io/badge/License-Proprietary-red)
 ![المنصة](https://img.shields.io/badge/platform-Android-green)
 ![مستوى API](https://img.shields.io/badge/API%20Level-21%2B-orange)
 
