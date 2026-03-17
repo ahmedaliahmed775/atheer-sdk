@@ -330,15 +330,42 @@ dependencies {
 
 ---
 
-## 📄 حقوق الملكية الفكرية وبراءة الاختراع (Copyright & Patent)
+## ⚖️ License and Copyright (الترخيص وحقوق الملكية)
 
-**جميع الحقوق محفوظة © 2026**
+**Copyright © 2026 Ahmed Ali Mohammed Hassan Al-Mutawakel. All Rights Reserved.**
 
-هذا العمل (بما في ذلك الأكواد البرمجية، والوثائق، والتصاميم) حصري ومحمي قانونياً بموجب براءة الاختراع المسجلة برقم **(153043)** لدى وزارة الصناعة والاقتصاد والاستثمار في صنعاء، الجمهورية اليمنية، باسم المبتكر: **أحمد علي محمد حسن المتوكل**.
+### 🛑 Proprietary Software & Patent Notice
+This repository and its contents (including but not limited to source code, documentation, and designs) are **proprietary** and protected by law. 
 
-يُحظر تماماً نسخ، أو إنتاج، أو توزيع، أو تعديل، أو هندسة عكسية، أو استغلال أي جزء من هذا المشروع بأي شكل من الأشكال للاستخدام التجاري أو الشخصي، دون الحصول على موافقة خطية صريحة ومسبقة. أي انتهاك لهذه الحقوق يُعرض المخالف للمساءلة القانونية والملاحقة القضائية بموجب قوانين حماية الملكية الفكرية.
+This work is officially patented under **Patent No. (153043)** by the Ministry of Industry, Economy, and Investment in Sana'a, Yemen.
 
-### 📞 للتواصل وطلب الأذونات:
-لطلب الإذن باستخدام أجزاء من هذا المشروع أو لأي استفسارات رسمية، يرجى التواصل عبر:
+You are **NOT** permitted to:
+* Copy, duplicate, or reproduce any part of this repository.
+* Modify, adapt, or create derivative works.
+* Distribute, share, or publish the source code.
+* Reverse engineer, decompile, or extract the source code.
+* Use this work for commercial or personal purposes without explicit written permission.
+
+### 🛑 إشعار حقوق الملكية وبراءة الاختراع
+هذا المستودع ومحتوياته (بما في ذلك الأكواد البرمجية، الوثائق، والتصاميم) **مملوكة حصرياً** ومحمية بموجب القانون.
+
+هذا العمل محمي رسمياً بموجب **براءة الاختراع رقم (153043)** المسجلة لدى وزارة الصناعة والاقتصاد والاستثمار في صنعاء، الجمهورية اليمنية.
+
+**يُحظر تماماً:**
+* نسخ أو إعادة إنتاج أي جزء من هذا المستودع.
+* تعديل أو اقتباس أو إنشاء أعمال مشتقة.
+* توزيع أو نشر أو مشاركة الكود المصدري.
+* الهندسة العكسية أو تفكيك الكود.
+* استخدام هذا العمل لأغراض تجارية أو شخصية دون إذن كتابي صريح.
+
+---
+
+### 📞 Contact & Permissions (للتواصل وطلب الأذونات)
+For business inquiries, licensing, or permissions, please contact:
+للاستفسارات التجارية أو طلب الإذن بالاستخدام، يرجى التواصل عبر:
+
+* 📧 **Email:** [ahmedali.2004.2004.2004@gmail.com](mailto:ahmedali.2004.2004.2004@gmail.com)
+* 📱 **Phone/WhatsApp:** +967 775 052 259
+
 * **البريد الإلكتروني:** [ahmedali.2004.2004.2004@gmail.com](mailto:ahmedali.2004.2004.2004@gmail.com)
 * **الهاتف:** +967 775 052 259
