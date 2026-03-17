@@ -2,44 +2,46 @@ name: Publish Atheer SDK to GitHub Packages
 
 # متى يعمل هذا السكربت؟
 on:
-  push:
-    branches:
-      - main # إذا كان الفرع الأساسي لديك اسمه master، قم بتغيير هذه الكلمة إلى master
+  release:
+    types: [published] # تعديل: يعمل فقط عند نشر Release جديد بدلاً من كل Push
 
 jobs:
   publish:
     name: Build and Publish
     runs-on: ubuntu-latest
 
-    # إعطاء الصلاحيات اللازمة لـ GitHub Token لكي يتمكن من رفع الحزمة
     permissions:
       contents: read
       packages: write 
 
     steps:
-      # 1. جلب الكود المصدري
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # 2. تجهيز بيئة الجافا (JDK 17) المتوافقة مع مشروعك
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
-          cache: gradle # تفعيل الكاش لتسريع عملية البناء في المرات القادمة
+          cache: gradle
 
-      # 3. إعطاء صلاحية التشغيل لملف Gradle
       - name: Make gradlew executable
         run: chmod +x gradlew
 
-      # 4. بناء المكتبة ونشرها إلى GitHub Packages
+      # خطوة جديدة: استخراج رقم الإصدار من الـ Release المنشور
+      - name: Extract Release Version
+        id: extract_version
+        run: |
+          # جلب اسم الـ Tag (مثل v1.0.0-beta)
+          TAG_NAME="${{ github.event.release.tag_name }}"
+          # إزالة حرف 'v' من البداية إن وُجد (v1.0.0-beta يصبح 1.0.0-beta)
+          CLEAN_VERSION="${TAG_NAME#v}"
+          # حفظ الرقم كمتغير بيئي للخطوة التالية
+          echo "SDK_VERSION=$CLEAN_VERSION" >> $GITHUB_ENV
+
       - name: Build and Publish to GitHub Packages
-        # هذا الأمر ينفذ مهمة النشر التي أضفناها في build.gradle.kts
         run: ./gradlew :atheer-sdk:publishReleasePublicationToGitHubPackagesRepository
         env:
-          # تمرير المتغيرات البيئية التي يحتاجها بلوك repositories في build.gradle.kts
           GITHUB_ACTOR: ${{ github.actor }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # رقم الإصدار الديناميكي لتجنب تعارض النشر (409 Conflict)
-          SDK_VERSION: 1.0.${{ github.run_number }}
+          # لم نعد بحاجة لكتابة SDK_VERSION هنا لأنه تم تجهيزه في الخطوة السابقة
