@@ -26,7 +26,8 @@ import com.atheer.sdk.network.AtheerSyncWorker as AtheerSyncWorker1
 class AtheerSdk private constructor(
     private val context: Context,
     private val merchantId: String,
-    apiBaseUrl: String
+    apiBaseUrl: String,
+    private val enableApnFallback: Boolean
 ) {
     private val apiBaseUrl: String = apiBaseUrl.trimEnd('/')
 
@@ -39,7 +40,7 @@ class AtheerSdk private constructor(
         /**
          * تهيئة المكتبة مع تفعيل فحوصات الأمان الصارمة
          */
-        fun init(context: Context, merchantId: String, apiBaseUrl: String) {
+        fun init(context: Context, merchantId: String, apiBaseUrl: String, enableApnFallback: Boolean = false) {
             Log.i(TAG, "بدء تهيئة Atheer SDK...")
 
             // =============================================================
@@ -63,7 +64,7 @@ class AtheerSdk private constructor(
             if (instance != null) return
             synchronized(this) {
                 if (instance == null) {
-                    instance = AtheerSdk(context.applicationContext, merchantId, apiBaseUrl)
+                    instance = AtheerSdk(context.applicationContext, merchantId, apiBaseUrl, enableApnFallback)
                     Log.i(TAG, "تمت تهيئة Atheer SDK بنجاح.")
                 }
             }
@@ -142,6 +143,13 @@ class AtheerSdk private constructor(
                 // جدولة المزامنة التلقائية
                 scheduleBackgroundSync(accessToken)
 
+                /*
+                if (!networkRouter.isNetworkAvailable() && enableApnFallback) {
+                    // توجيه الطلب إلى مقسم أثير عبر نفق APN باستخدام AtheerCellularRouter
+                    // سيتم تفعيل هذا الكود فور جاهزية الشراكات مع شركات الاتصالات
+                }
+                */
+
                 if (networkRouter.isNetworkAvailable()) {
                     val requestBody = buildTransactionJson(transaction.transactionId, tokenizedCard, String(sensitiveNonce), transaction.amount)
                     networkRouter.executeStandard("$apiBaseUrl/api/v1/merchant/charge", requestBody, accessToken)
@@ -198,6 +206,13 @@ class AtheerSdk private constructor(
                 var syncedCount = 0
                 for (entity in unsyncedTransactions) {
                     try {
+                        /*
+                        if (!networkRouter.isNetworkAvailable() && enableApnFallback) {
+                            // توجيه الطلب إلى مقسم أثير عبر نفق APN باستخدام AtheerCellularRouter
+                            // سيتم تفعيل هذا الكود فور جاهزية الشراكات مع شركات الاتصالات
+                        }
+                        */
+
                         // فك تشفير المبلغ المخزن لإرساله بشكل صحيح
                         val decryptedAmount = try {
                             keystoreManager.decrypt(entity.encryptedAmount).toLong()
