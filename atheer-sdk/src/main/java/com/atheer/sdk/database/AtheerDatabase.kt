@@ -16,7 +16,7 @@ import com.atheer.sdk.security.AtheerKeystoreManager
  */
 @Database(
     entities = [TransactionEntity::class],
-    version = 1,
+    version = 2, // تم التحديث للإصدار 2 لدعم حقول المحافظ اليمنية (agentWallet, receiverMobile, etc.)
     exportSchema = false
 )
 abstract class AtheerDatabase : RoomDatabase() {

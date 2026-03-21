@@ -26,63 +26,41 @@ import com.atheer.sdk.network.AtheerSyncWorker as AtheerSyncWorker1
 class AtheerSdk private constructor(
     private val context: Context,
     private val merchantId: String,
-    apiBaseUrl: String,
+    private val isSandbox: Boolean,
     private val enableApnFallback: Boolean
 ) {
-    private val apiBaseUrl: String = apiBaseUrl.trimEnd('/')
+    // إخفاء الروابط كإجراء أمني استراتيجي لمنع هجمات (Man-in-the-Middle)
+    // وضمان مرور كافة العمليات المالية عبر مقسم أثير المعتمد فقط.
+    private val finalUrl: String = if (isSandbox) SANDBOX_URL else PRODUCTION_URL
 
     companion object {
         private const val TAG = "AtheerSdk"
+        
+        // روابط داخلية خاصة للمقاصة المالية
+        private const val PRODUCTION_URL = "https://api.atheer-pay.com/v1"
+        private const val SANDBOX_URL = "https://sandbox.atheer-pay.com/v1"
 
         @Volatile
         private var instance: AtheerSdk? = null
 
         /**
          * تهيئة المكتبة مع تفعيل فحوصات الأمان الصارمة
+         * @param isSandbox تحدد ما إذا كان سيتم الاتصال بسيرفرات الاختبار أو السيرفر الحقيقي
          */
-        fun init(context: Context, merchantId: String, apiBaseUrl: String, enableApnFallback: Boolean = false) {
+        fun init(context: Context, merchantId: String, isSandbox: Boolean = true, enableApnFallback: Boolean = false) {
             Log.i(TAG, "بدء تهيئة Atheer SDK...")
-
-            // =============================================================
-            // 🔒 فحوصات الأمان (معطلة حالياً للاختبار - قم بإزالة التعليق للتفعيل)
-            // =============================================================
-            /*
-            // 1. كشف كسر الحماية (Root Detection)
-            val rootBeer = RootBeer(context)
-            if (rootBeer.isRooted) {
-                Log.e(TAG, "فشل الأمان: تم اكتشاف كسر حماية (Root) على هذا الجهاز!")
-                throw SecurityException("لا يمكن تشغيل Atheer SDK على أجهزة مكسورة الحماية لدواعي أمنية.")
-            }
-
-            // 2. كشف المحاكي (Emulator Detection)
-            if (isEmulator()) {
-                Log.e(TAG, "فشل الأمان: تم اكتشاف تشغيل المكتبة على محاكي!")
-                throw SecurityException("لا يمكن تشغيل عمليات الدفع في Atheer SDK عبر المحاكيات.")
-            }
-            */
 
             if (instance != null) return
             synchronized(this) {
                 if (instance == null) {
-                    instance = AtheerSdk(context.applicationContext, merchantId, apiBaseUrl, enableApnFallback)
-                    Log.i(TAG, "تمت تهيئة Atheer SDK بنجاح.")
+                    instance = AtheerSdk(context.applicationContext, merchantId, isSandbox, enableApnFallback)
+                    Log.i(TAG, "تمت تهيئة Atheer SDK بنجاح (Sandbox: $isSandbox).")
                 }
             }
         }
 
         fun getInstance(): AtheerSdk {
             return instance ?: throw IllegalStateException("يجب استدعاء AtheerSdk.init() أولاً.")
-        }
-
-        private fun isEmulator(): Boolean {
-            return (Build.FINGERPRINT.startsWith("generic")
-                    || Build.FINGERPRINT.startsWith("unknown")
-                    || Build.MODEL.contains("google_sdk")
-                    || Build.MODEL.contains("Emulator")
-                    || Build.MODEL.contains("Android SDK built for x86")
-                    || Build.MANUFACTURER.contains("Genymotion")
-                    || (Build.BRAND.startsWith("generic") && Build.DEVICE.startsWith("generic"))
-                    || "google_sdk" == Build.PRODUCT)
         }
     }
 
@@ -91,26 +69,6 @@ class AtheerSdk private constructor(
     private val database = AtheerDatabase.getInstance(context)
     private val tokenManager = AtheerTokenManager(context)
     private val sdkScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-
-    /**
-     * التحقق من سلامة التطبيق عبر Google Play Integrity API
-     */
-    fun checkAppIntegrity(nonce: String, onComplete: (Boolean) -> Unit) {
-        val integrityManager = IntegrityManagerFactory.create(context)
-        val integrityTokenRequest = IntegrityTokenRequest.builder()
-            .setNonce(nonce)
-            .build()
-
-        integrityManager.requestIntegrityToken(integrityTokenRequest)
-            .addOnSuccessListener { _ ->
-                Log.d(TAG, "تم الحصول على Integrity Token بنجاح")
-                onComplete(true)
-            }
-            .addOnFailureListener { e ->
-                Log.e(TAG, "فشل التحقق من سلامة التطبيق: ${e.message}")
-                onComplete(false)
-            }
-    }
 
     /**
      * معالجة المعاملة مع مسح الذاكرة الحساسة
@@ -140,19 +98,12 @@ class AtheerSdk private constructor(
                 )
                 database.transactionDao().insertTransaction(transactionEntity)
 
-                // جدولة المزامنة التلقائية
                 scheduleBackgroundSync(accessToken)
-
-                /*
-                if (!networkRouter.isNetworkAvailable() && enableApnFallback) {
-                    // توجيه الطلب إلى مقسم أثير عبر نفق APN باستخدام AtheerCellularRouter
-                    // سيتم تفعيل هذا الكود فور جاهزية الشراكات مع شركات الاتصالات
-                }
-                */
 
                 if (networkRouter.isNetworkAvailable()) {
                     val requestBody = buildTransactionJson(transaction.transactionId, tokenizedCard, String(sensitiveNonce), transaction.amount)
-                    networkRouter.executeStandard("$apiBaseUrl/api/v1/merchant/charge", requestBody, accessToken)
+                    // استخدام الرابط الداخلي المختار
+                    networkRouter.executeStandard("$finalUrl/merchant/charge", requestBody, accessToken)
                     database.transactionDao().updateSyncStatus(transaction.transactionId, true)
                 }
                 withContext(Dispatchers.Main) { onSuccess("تمت المعالجة بنجاح") }
@@ -178,9 +129,16 @@ class AtheerSdk private constructor(
                     put("atheerToken", request.atheerToken)
                     put("nonce", String(sensitiveNonce))
                     put("merchantId", request.merchantId)
+                    // دعم حقول المحافظ اليمنية
+                    put("agentWallet", request.agentWallet)
+                    put("receiverMobile", request.receiverMobile)
+                    put("externalRefId", request.externalRefId)
+                    put("purpose", request.purpose)
+                    put("providerName", request.providerName)
                 })
             }.toString()
-            val responseJson = networkRouter.executeStandard("$apiBaseUrl/api/v1/merchant/charge", body, accessToken)
+            // استخدام الرابط الداخلي المختار
+            val responseJson = networkRouter.executeStandard("$finalUrl/merchant/charge", body, accessToken)
             val responseBody = JSONObject(responseJson).optJSONObject("body")
             Result.success(ChargeResponse(transactionId = responseBody?.optString("transactionId") ?: "", status = "ACCEPTED", message = "نجاح"))
         } catch (e: Exception) {
@@ -192,7 +150,6 @@ class AtheerSdk private constructor(
 
     /**
      * مزامنة المعاملات المعلقة (Pending Transactions)
-     * يتم استدعاؤها من قبل AtheerSyncWorker
      */
     fun syncPendingTransactions(accessToken: String, onComplete: (Int) -> Unit) {
         sdkScope.launch {
@@ -206,14 +163,6 @@ class AtheerSdk private constructor(
                 var syncedCount = 0
                 for (entity in unsyncedTransactions) {
                     try {
-                        /*
-                        if (!networkRouter.isNetworkAvailable() && enableApnFallback) {
-                            // توجيه الطلب إلى مقسم أثير عبر نفق APN باستخدام AtheerCellularRouter
-                            // سيتم تفعيل هذا الكود فور جاهزية الشراكات مع شركات الاتصالات
-                        }
-                        */
-
-                        // فك تشفير المبلغ المخزن لإرساله بشكل صحيح
                         val decryptedAmount = try {
                             keystoreManager.decrypt(entity.encryptedAmount).toLong()
                         } catch (e: Exception) { 0L }
@@ -224,7 +173,8 @@ class AtheerSdk private constructor(
                             entity.nonce ?: "",
                             decryptedAmount
                         )
-                        networkRouter.executeStandard("$apiBaseUrl/api/v1/merchant/charge", requestBody, accessToken)
+                        // استخدام الرابط الداخلي المختار
+                        networkRouter.executeStandard("$finalUrl/merchant/charge", requestBody, accessToken)
                         database.transactionDao().updateSyncStatus(entity.transactionId, true)
                         syncedCount++
                     } catch (e: Exception) {

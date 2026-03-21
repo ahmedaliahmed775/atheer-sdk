@@ -19,6 +19,11 @@ import androidx.room.PrimaryKey
  * @param encryptedToken الرمز المميز المشفر للبطاقة
  * @param nonce الرقم العشوائي لمنع هجمات إعادة التشغيل
  * @param isSynced هل تمت مزامنة هذه المعاملة مع الخادم
+ * @param agentWallet معرف محفظة الوكيل (خاص بالمحافظ اليمنية)
+ * @param receiverMobile رقم هاتف المستلم (خاص بالمحافظ اليمنية)
+ * @param externalRefId رقم المرجع الخاص بنظام المحفظة المضيفة (التتبع الخارجي)
+ * @param purpose غرض العملية (مثال: دفع خدمات، تحويل)
+ * @param providerName اسم مزود المحفظة (مثل: JAWALI, KURAIMI)
  */
 @Entity(tableName = "transactions")
 data class TransactionEntity(
@@ -48,5 +53,21 @@ data class TransactionEntity(
     val nonce: String?,
 
     @ColumnInfo(name = "is_synced")
-    val isSynced: Boolean = false
+    val isSynced: Boolean = false,
+
+    // حقول إضافية لدعم المحافظ اليمنية في قاعدة البيانات
+    @ColumnInfo(name = "agent_wallet")
+    val agentWallet: String? = null,    // معرف محفظة الوكيل المسؤول عن العملية
+
+    @ColumnInfo(name = "receiver_mobile")
+    val receiverMobile: String? = null, // رقم هاتف المستلم النهائي للأموال
+
+    @ColumnInfo(name = "external_ref_id")
+    val externalRefId: String? = null,  // المرجع الفريد في نظام المحفظة الخارجي
+
+    @ColumnInfo(name = "purpose")
+    val purpose: String? = null,        // الغرض من العملية للامتثال المالي
+
+    @ColumnInfo(name = "provider_name")
+    val providerName: String? = null    // اسم مزود المحفظة (مثل: JAWALI, KURAIMI)
 )
