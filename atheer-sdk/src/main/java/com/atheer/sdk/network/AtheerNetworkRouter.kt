@@ -6,6 +6,7 @@ import android.net.NetworkCapabilities
 import android.util.Log
 import com.atheer.sdk.model.AtheerError
 import com.atheer.sdk.model.TokensResponse
+import com.atheer.sdk.model.TokenInfo
 import com.google.gson.Gson
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -54,11 +55,15 @@ class AtheerNetworkRouter(private val context: Context) {
     suspend fun executeStandard(
         urlString: String,
         requestBody: String? = null,
-        accessToken: String? = null
+        accessToken: String? = null,
+        merchantApiKey: String? = null
     ): String = withContext(Dispatchers.IO) {
         val requestBuilder = Request.Builder().url(urlString)
         requestBuilder.addHeader("Accept", "application/json")
         accessToken?.let { requestBuilder.addHeader("Authorization", "Bearer $it") }
+        
+        // إضافة ترويسة الأمان المطلوبة للتاجر
+        merchantApiKey?.let { requestBuilder.addHeader("x-atheer-api-key", it) }
 
         if (requestBody != null) {
             requestBuilder.post(requestBody.toRequestBody(JSON_MEDIA_TYPE))
@@ -76,6 +81,7 @@ class AtheerNetworkRouter(private val context: Context) {
                 when (response.code) {
                     200, 201 -> return@withContext body
                     401 -> throw mapToAtheerError(body, AtheerError.AuthenticationFailed())
+                    403 -> throw mapToAtheerError(body, AtheerError.AuthenticationFailed("صلاحيات غير كافية أو مفتاح API خاطئ"))
                     400 -> throw mapToAtheerError(body, AtheerError.InvalidVoucher())
                     504 -> throw AtheerError.ProviderTimeout()
                     else -> {
@@ -120,7 +126,7 @@ class AtheerNetworkRouter(private val context: Context) {
         return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
     }
 
-    suspend fun fetchOfflineTokens(apiBaseUrl: String, authToken: String, count: Int, limit: Long): Result<List<String>> {
+    suspend fun fetchOfflineTokens(apiBaseUrl: String, authToken: String, merchantApiKey: String?, count: Int, limit: Long): Result<List<TokenInfo>> {
         return try {
             val url = "$apiBaseUrl/api/v1/wallet/offline-tokens"
             val json = JSONObject().apply {
@@ -128,7 +134,7 @@ class AtheerNetworkRouter(private val context: Context) {
                 put("limit", limit)
             }.toString()
 
-            val responseStr = executeStandard(url, json, authToken)
+            val responseStr = executeStandard(url, json, authToken, merchantApiKey)
             val response = Gson().fromJson(responseStr, TokensResponse::class.java)
 
             if (response?.success == true && response.data?.tokens != null) {

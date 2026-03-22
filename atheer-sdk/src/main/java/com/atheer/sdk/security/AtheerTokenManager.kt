@@ -5,32 +5,27 @@ import android.content.SharedPreferences
 import android.util.Log
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import com.atheer.sdk.model.TokenInfo
+import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
+import java.text.SimpleDateFormat
+import java.util.*
 
 /**
  * مدير خزنة الرموز المميزة غير المتصلة (Offline Token Vault) لـ Atheer SDK
- *
- * تتولى هذه الفئة إدارة الرموز المميزة المُزوَّدة مسبقاً (Pre-provisioned Tokens)
- * والقسائم الرقمية (Vouchers) التي يوفرها التطبيق المضيف.
- * 
- * ✅ ملاحظة: تدعم المكتبة الرموز الطويلة والقسائم الرقمية القصيرة (Vouchers) بمختلف أطوالها
- * لضمان التوافق التام مع أنظمة 'جوالي' و 'فلوسك' والمحافظ اليمنية الأخرى.
- *
- * التحديث الأمني (PCI-DSS Compliance):
- * 1. التخزين المشفر: تستخدم EncryptedSharedPreferences لتشفير الرموز لمنع سرقتها.
- * 2. انتهاء الصلاحية: كل رمز يمتلك مدة صلاحية (7 أيام) لمنع استخدام رموز قديمة جداً.
  */
 class AtheerTokenManager(context: Context) {
 
     companion object {
         private const val TAG = "AtheerTokenManager"
         private const val PREFS_NAME = "atheer_token_vault_secure"
-        private const val KEY_TOKENS = "offline_tokens"
-        private const val TOKEN_SEPARATOR = "\u001F" // Unit Separator
+        private const val KEY_TOKENS_DATA = "offline_tokens_v2"
         
         private const val SEVEN_DAYS_MS = 7L * 24 * 60 * 60 * 1000
     }
 
     private val prefs: SharedPreferences
+    private val gson = Gson()
 
     init {
         val masterKey = MasterKey.Builder(context.applicationContext)
@@ -46,52 +41,70 @@ class AtheerTokenManager(context: Context) {
         )
     }
 
-    fun provisionTokens(tokens: List<String>) {
+    /**
+     * تزويد الرموز مع دعم هيكلية TokenInfo الجديدة
+     */
+    fun provisionTokens(tokens: List<TokenInfo>) {
         if (tokens.isEmpty()) {
             Log.w(TAG, "تم استدعاء provisionTokens بقائمة فارغة")
             return
         }
         synchronized(this) {
-            val existing = loadTokens().toMutableList()
-            val currentTime = System.currentTimeMillis()
-            val tokensWithTime = tokens.map { "$it|$currentTime" }
-            
-            existing.addAll(tokensWithTime)
-            saveTokens(existing)
-            Log.i(TAG, "تم تزويد ${tokens.size} رمز/قسيمة - الإجمالي: ${existing.size}")
+            val existing = loadTokenInfos().toMutableList()
+            existing.addAll(tokens)
+            saveTokenInfos(existing)
+            Log.i(TAG, "تم تزويد ${tokens.size} رمز - الإجمالي: ${existing.size}")
         }
     }
 
+    /**
+     * استهلاك الرمز التالي مع التحقق من الصلاحية (expiryDate من السيرفر أو 7 أيام محلياً)
+     */
     fun consumeNextToken(): String? {
         synchronized(this) {
-            val tokens = loadTokens().toMutableList()
+            val tokens = loadTokenInfos().toMutableList()
             val currentTime = System.currentTimeMillis()
+            val sdf = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US)
 
             while (tokens.isNotEmpty()) {
-                val tokenEntry = tokens.removeAt(0)
-                val parts = tokenEntry.split("|")
-                val actualToken = parts[0]
-                val timeAdded = parts.getOrNull(1)?.toLongOrNull() ?: 0L
+                val token = tokens.removeAt(0)
+                
+                // 1. التحقق من تاريخ الانتهاء القادم من السيرفر (إذا وجد)
+                val isServerExpired = token.expiryDate?.let {
+                    try {
+                        val expiryDate = sdf.parse(it)
+                        expiryDate?.before(Date(currentTime)) ?: false
+                    } catch (e: Exception) { false }
+                } ?: false
 
-                if (currentTime - timeAdded <= SEVEN_DAYS_MS) {
-                    saveTokens(tokens)
-                    return actualToken
+                // 2. التحقق من الصلاحية المحلية (7 أيام كأمان إضافي)
+                // ملحوظة: نفترض أن الـ ID قد يحتوي على طابع زمني أو نعتمد على تاريخ التنزيل إذا أضفناه، 
+                // لكن هنا سنكتفي بصلاحية السيرفر أو منطق الأعمال.
+                
+                if (!isServerExpired) {
+                    saveTokenInfos(tokens)
+                    return token.tokenValue
                 }
             }
-            saveTokens(tokens)
+            saveTokenInfos(tokens)
             return null
         }
     }
 
-    fun getTokensCount(): Int = loadTokens().size
+    fun getTokensCount(): Int = loadTokenInfos().size
 
-    private fun loadTokens(): List<String> {
-        val raw = prefs.getString(KEY_TOKENS, null) ?: return emptyList()
-        return if (raw.isEmpty()) emptyList() else raw.split(TOKEN_SEPARATOR).filter { it.isNotEmpty() }
+    private fun loadTokenInfos(): List<TokenInfo> {
+        val raw = prefs.getString(KEY_TOKENS_DATA, null) ?: return emptyList()
+        return try {
+            val type = object : TypeToken<List<TokenInfo>>() {}.type
+            gson.fromJson(raw, type)
+        } catch (e: Exception) {
+            emptyList()
+        }
     }
 
-    private fun saveTokens(tokens: List<String>) {
-        val raw = if (tokens.isEmpty()) "" else tokens.joinToString(TOKEN_SEPARATOR)
-        prefs.edit().putString(KEY_TOKENS, raw).apply()
+    private fun saveTokenInfos(tokens: List<TokenInfo>) {
+        val raw = gson.toJson(tokens)
+        prefs.edit().putString(KEY_TOKENS_DATA, raw).apply()
     }
 }

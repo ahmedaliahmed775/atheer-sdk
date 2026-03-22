@@ -9,5 +9,12 @@ data class TokensResponse(
 )
 
 data class TokensData(
-    @SerializedName("tokens") val tokens: List<String>
+    @SerializedName("tokens") val tokens: List<TokenInfo>
+)
+
+data class TokenInfo(
+    @SerializedName("id") val id: String,
+    @SerializedName("tokenValue") val tokenValue: String,
+    @SerializedName("providerName") val providerName: String?,
+    @SerializedName("expiryDate") val expiryDate: String? // Expected ISO format
 )

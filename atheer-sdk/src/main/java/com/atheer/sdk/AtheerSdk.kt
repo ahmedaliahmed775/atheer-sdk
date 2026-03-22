@@ -1,7 +1,6 @@
 package com.atheer.sdk
 
 import android.content.Context
-import android.os.Build
 import android.util.Log
 import androidx.work.*
 import com.atheer.sdk.database.AtheerDatabase
@@ -12,49 +11,48 @@ import com.atheer.sdk.model.ChargeResponse
 import com.atheer.sdk.network.AtheerNetworkRouter
 import com.atheer.sdk.security.AtheerKeystoreManager
 import com.atheer.sdk.security.AtheerTokenManager
-import com.scottyab.rootbeer.RootBeer
-import com.google.android.play.core.integrity.IntegrityManagerFactory
-import com.google.android.play.core.integrity.IntegrityTokenRequest
 import kotlinx.coroutines.*
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 import com.atheer.sdk.network.AtheerSyncWorker as AtheerSyncWorker1
 
 /**
- * الواجهة الرئيسية (Facade) لـ Atheer SDK مع فحوصات الأمان ومسح الذاكرة
+ * الواجهة الرئيسية (Facade) لـ Atheer SDK - نسخة مطورة متوافقة مع Atheer Switch V1
  */
 class AtheerSdk private constructor(
     private val context: Context,
     private val merchantId: String,
+    private val apiKey: String, // مفتاح API المضاف حديثاً للترويسات
     private val isSandbox: Boolean,
     private val enableApnFallback: Boolean
 ) {
-    // إخفاء الروابط كإجراء أمني استراتيجي لمنع هجمات (Man-in-the-Middle)
-    // وضمان مرور كافة العمليات المالية عبر مقسم أثير المعتمد فقط.
     private val finalUrl: String = if (isSandbox) SANDBOX_URL else PRODUCTION_URL
 
     companion object {
         private const val TAG = "AtheerSdk"
         
-        // روابط داخلية خاصة للمقاصة المالية
-        private const val PRODUCTION_URL = "https://api.atheer-pay.com/v1"
-        private const val SANDBOX_URL = "https://sandbox.atheer-pay.com/v1"
+        // روابط المقاصة المالية المحدثة
+        private const val PRODUCTION_URL = "https://api.atheer-pay.com"
+        private const val SANDBOX_URL = "https://sandbox.atheer-pay.com"
+        
+        // المسار الجديد لعملية الدفع
+        private const val CHARGE_PATH = "/api/v1/payments/process"
 
         @Volatile
         private var instance: AtheerSdk? = null
 
         /**
-         * تهيئة المكتبة مع تفعيل فحوصات الأمان الصارمة
-         * @param isSandbox تحدد ما إذا كان سيتم الاتصال بسيرفرات الاختبار أو السيرفر الحقيقي
+         * تهيئة المكتبة
+         * @param apiKey مفتاح التاجر الخاص بـ Atheer Switch
          */
-        fun init(context: Context, merchantId: String, isSandbox: Boolean = true, enableApnFallback: Boolean = false) {
+        fun init(context: Context, merchantId: String, apiKey: String, isSandbox: Boolean = true, enableApnFallback: Boolean = false) {
             Log.i(TAG, "بدء تهيئة Atheer SDK...")
 
             if (instance != null) return
             synchronized(this) {
                 if (instance == null) {
-                    instance = AtheerSdk(context.applicationContext, merchantId, isSandbox, enableApnFallback)
-                    Log.i(TAG, "تمت تهيئة Atheer SDK بنجاح (Sandbox: $isSandbox).")
+                    instance = AtheerSdk(context.applicationContext, merchantId, apiKey, isSandbox, enableApnFallback)
+                    Log.i(TAG, "تمت تهيئة Atheer SDK بنجاح.")
                 }
             }
         }
@@ -71,7 +69,7 @@ class AtheerSdk private constructor(
     private val sdkScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     /**
-     * معالجة المعاملة مع مسح الذاكرة الحساسة
+     * معالجة المعاملة التقليدية (مع تحديث المسار والترويسات)
      */
     fun processTransaction(
         transaction: AtheerTransaction,
@@ -101,9 +99,17 @@ class AtheerSdk private constructor(
                 scheduleBackgroundSync(accessToken)
 
                 if (networkRouter.isNetworkAvailable()) {
-                    val requestBody = buildTransactionJson(transaction.transactionId, tokenizedCard, String(sensitiveNonce), transaction.amount)
-                    // استخدام الرابط الداخلي المختار
-                    networkRouter.executeStandard("$finalUrl/merchant/charge", requestBody, accessToken)
+                    // استخدام الهيكل المسطح والمسار الجديد
+                    val requestBody = JSONObject().apply {
+                        put("transactionId", transaction.transactionId)
+                        put("atheerToken", tokenizedCard)
+                        put("nonce", String(sensitiveNonce))
+                        put("amount", transaction.amount)
+                        put("merchantId", merchantId)
+                        put("currency", transaction.currency)
+                    }.toString()
+
+                    networkRouter.executeStandard("$finalUrl$CHARGE_PATH", requestBody, accessToken, apiKey)
                     database.transactionDao().updateSyncStatus(transaction.transactionId, true)
                 }
                 withContext(Dispatchers.Main) { onSuccess("تمت المعالجة بنجاح") }
@@ -117,30 +123,37 @@ class AtheerSdk private constructor(
     }
 
     /**
-     * تنفيذ شحن مباشر
+     * تنفيذ شحن مباشر (Flattened Request Structure)
      */
     suspend fun charge(request: ChargeRequest, accessToken: String): Result<ChargeResponse> {
         val sensitiveNonce = keystoreManager.generateNonce().toCharArray()
         return try {
+            // تحديث الهيكل ليكون مسطحاً (Flattening) وإضافة الحقول الإلزامية
             val body = JSONObject().apply {
-                put("header", JSONObject().apply { put("serviceDetail", JSONObject().apply { put("serviceName", "ATHEER.CASH") }) })
-                put("body", JSONObject().apply {
-                    put("amount", request.amount)
-                    put("atheerToken", request.atheerToken)
-                    put("nonce", String(sensitiveNonce))
-                    put("merchantId", request.merchantId)
-                    // دعم حقول المحافظ اليمنية
-                    put("agentWallet", request.agentWallet)
-                    put("receiverMobile", request.receiverMobile)
-                    put("externalRefId", request.externalRefId)
-                    put("purpose", request.purpose)
-                    put("providerName", request.providerName)
-                })
+                put("amount", request.amount)
+                put("currency", request.currency)
+                put("merchantId", request.merchantId)
+                put("atheerToken", request.atheerToken)
+                put("customerMobile", request.customerMobile) // الحقل الجديد الإلزامي
+                put("nonce", String(sensitiveNonce))
+                put("description", request.description)
+                
+                // حقول المحافظ
+                put("agentWallet", request.agentWallet)
+                put("receiverMobile", request.receiverMobile)
+                put("externalRefId", request.externalRefId)
+                put("purpose", request.purpose)
+                put("providerName", request.providerName)
             }.toString()
-            // استخدام الرابط الداخلي المختار
-            val responseJson = networkRouter.executeStandard("$finalUrl/merchant/charge", body, accessToken)
-            val responseBody = JSONObject(responseJson).optJSONObject("body")
-            Result.success(ChargeResponse(transactionId = responseBody?.optString("transactionId") ?: "", status = "ACCEPTED", message = "نجاح"))
+
+            // استخدام المسار الجديد والترويسة الأمنية x-atheer-api-key
+            val responseJson = networkRouter.executeStandard("$finalUrl$CHARGE_PATH", body, accessToken, apiKey)
+            
+            // التعامل مع الرد المسطح أيضاً إذا لزم الأمر
+            val responseObj = JSONObject(responseJson)
+            val transactionId = responseObj.optString("transactionId") ?: responseObj.optJSONObject("data")?.optString("transactionId") ?: ""
+            
+            Result.success(ChargeResponse(transactionId = transactionId, status = "ACCEPTED", message = "نجاح العملية"))
         } catch (e: Exception) {
             Result.failure(e)
         } finally {
@@ -149,7 +162,7 @@ class AtheerSdk private constructor(
     }
 
     /**
-     * مزامنة المعاملات المعلقة (Pending Transactions)
+     * مزامنة المعاملات المعلقة
      */
     fun syncPendingTransactions(accessToken: String, onComplete: (Int) -> Unit) {
         sdkScope.launch {
@@ -167,14 +180,17 @@ class AtheerSdk private constructor(
                             keystoreManager.decrypt(entity.encryptedAmount).toLong()
                         } catch (e: Exception) { 0L }
 
-                        val requestBody = buildTransactionJson(
-                            entity.transactionId,
-                            entity.encryptedToken ?: "",
-                            entity.nonce ?: "",
-                            decryptedAmount
-                        )
-                        // استخدام الرابط الداخلي المختار
-                        networkRouter.executeStandard("$finalUrl/merchant/charge", requestBody, accessToken)
+                        // استخدام الهيكل المسطح في المزامنة أيضاً
+                        val requestBody = JSONObject().apply {
+                            put("transactionId", entity.transactionId)
+                            put("atheerToken", entity.encryptedToken)
+                            put("nonce", entity.nonce)
+                            put("amount", decryptedAmount)
+                            put("merchantId", entity.merchantId)
+                            put("currency", entity.currency)
+                        }.toString()
+
+                        networkRouter.executeStandard("$finalUrl$CHARGE_PATH", requestBody, accessToken, apiKey)
                         database.transactionDao().updateSyncStatus(entity.transactionId, true)
                         syncedCount++
                     } catch (e: Exception) {
@@ -188,9 +204,6 @@ class AtheerSdk private constructor(
         }
     }
 
-    /**
-     * جدولة مهمة المزامنة عبر WorkManager
-     */
     fun scheduleBackgroundSync(authToken: String) {
         val constraints = Constraints.Builder()
             .setRequiredNetworkType(NetworkType.CONNECTED)
@@ -203,30 +216,11 @@ class AtheerSdk private constructor(
         val syncRequest = OneTimeWorkRequestBuilder<AtheerSyncWorker1>()
             .setConstraints(constraints)
             .setInputData(syncData)
-            .setBackoffCriteria(
-                BackoffPolicy.EXPONENTIAL,
-                WorkRequest.MIN_BACKOFF_MILLIS,
-                TimeUnit.MILLISECONDS
-            )
+            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, WorkRequest.MIN_BACKOFF_MILLIS, TimeUnit.MILLISECONDS)
             .addTag("AtheerSyncTag")
             .build()
 
-        WorkManager.getInstance(context).enqueueUniqueWork(
-            "AtheerBackgroundSync",
-            ExistingWorkPolicy.REPLACE,
-            syncRequest
-        )
-    }
-
-    private fun buildTransactionJson(id: String, token: String, nonce: String, amount: Long): String {
-        return JSONObject().apply {
-            put("header", JSONObject().apply { put("transactionId", id) })
-            put("body", JSONObject().apply {
-                put("atheerToken", token)
-                put("nonce", nonce)
-                put("amount", amount)
-            })
-        }.toString()
+        WorkManager.getInstance(context).enqueueUniqueWork("AtheerBackgroundSync", ExistingWorkPolicy.REPLACE, syncRequest)
     }
 
     fun getNextOfflineLimit(): Int {
@@ -239,5 +233,5 @@ class AtheerSdk private constructor(
     }
 
     fun getKeystoreManager() = keystoreManager
-    fun getDatabase() = database
+    fun getTokenManager() = tokenManager
 }
