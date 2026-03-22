@@ -10,7 +10,16 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
 /**
- * خدمة HCE (محاكاة البطاقة المضيفة) لـ Atheer SDK مع تطبيق Memory Wiping
+ * ## AtheerApduService
+ * خدمة محاكاة البطاقة المضيفة (HCE) التي تسمح للجهاز بالعمل كبطاقة دفع لا تلامسية.
+ *
+ * تقوم هذه الخدمة باستقبال ومعالجة أوامر APDU (Application Protocol Data Unit) من أجهزة قراءة البطاقات.
+ * تعتمد الخدمة مبدأ **Memory Wiping** (مسح الذاكرة) لضمان عدم بقاء البيانات الحساسة في الذاكرة العشوائية لفترة طويلة.
+ *
+ * ### منطق العمل:
+ * 1. **SELECT AID**: التعرف على تطبيق أثير عند اختيار الـ AID الخاص به.
+ * 2. **GET PAYMENT DATA**: استهلاك رمز دفع (Token) من المخزن المحلي وإرساله للقارئ.
+ * 3. **التحقق من الحدود**: التأكد من أن المبلغ المطلوب لا يتجاوز حد العمليات "دون اتصال" المسموح به.
  */
 class AtheerApduService : HostApduService() {
 
@@ -39,6 +48,13 @@ class AtheerApduService : HostApduService() {
         tokenManager = AtheerTokenManager(applicationContext)
     }
 
+    /**
+     * المعالج الرئيسي لأوامر APDU الواردة من القارئ الخارجي.
+     *
+     * @param commandApdu مصفوفة البايتات التي تحتوي على الأمر الوارد.
+     * @param extras بيانات إضافية ممررة من النظام.
+     * @return مصفوفة بايتات تمثل الرد (Response APDU) الذي سيتم إرساله للقارئ.
+     */
     override fun processCommandApdu(commandApdu: ByteArray, extras: Bundle?): ByteArray {
         return try {
             when {
@@ -77,7 +93,8 @@ class AtheerApduService : HostApduService() {
     }
 
     /**
-     * مسح البيانات الحساسة من الذاكرة (Memory Wiping)
+     * مسح البيانات الحساسة من الذاكرة (Memory Wiping) لضمان الأمان.
+     * يتم تصفير المصفوفات التي تحتوي على التوكنز والمبالغ.
      */
     private fun clearSensitiveData() {
         sensitiveTokenBuffer?.fill(0)
@@ -85,6 +102,10 @@ class AtheerApduService : HostApduService() {
         sensitiveAmountBuffer.fill(0.0)
     }
 
+    /**
+     * معالجة طلب بيانات الدفع وتجهيز الرد الذي يحتوي على التوكن.
+     * @return مصفوفة بايتات تحتوي على التوكن المرمز متبوعاً برمز النجاح 9000.
+     */
     private fun handleGetPaymentData(): ByteArray {
         val tokenStr = tokenManager.consumeNextToken()
         return if (tokenStr != null) {
@@ -94,7 +115,6 @@ class AtheerApduService : HostApduService() {
             sensitiveTokenBuffer = tokenStr.toByteArray(Charsets.UTF_8)
             val response = sensitiveTokenBuffer!! + APDU_OK
             
-            // مسح السلسلة النصية الأصلية (قدر الإمكان في JVM)
             response
         } else {
             APDU_NO_TOKENS
@@ -113,6 +133,10 @@ class AtheerApduService : HostApduService() {
         return buffer.int / 100.0
     }
 
+    /**
+     * يتم استدعاؤها عند فقدان الاتصال بالقارئ أو انتهاء الجلسة.
+     * @param reason سبب إلغاء التفعيل.
+     */
     override fun onDeactivated(reason: Int) {
         Log.i(TAG, "إلغاء تفعيل HCE - مسح نهائي للذاكرة")
         clearSensitiveData()

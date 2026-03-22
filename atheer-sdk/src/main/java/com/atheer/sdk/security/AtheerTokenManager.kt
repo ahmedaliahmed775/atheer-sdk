@@ -12,7 +12,11 @@ import java.text.SimpleDateFormat
 import java.util.*
 
 /**
- * مدير خزنة الرموز المميزة غير المتصلة (Offline Token Vault) لـ Atheer SDK
+ * ## AtheerTokenManager
+ * نظام تخزين وإدارة الرموز المميزة (Tokens) للعمليات التي تتم دون اتصال بالإنترنت (Offline Vault).
+ *
+ * يعتمد هذا الكلاس على التخزين المشفر لضمان حماية الرموز من الوصول غير المصرح به، ويقوم بإدارة
+ * دورة حياة الرموز من حيث التزويد (Provisioning) والاستهلاك (Consumption) والتحقق من الصلاحية.
  */
 class AtheerTokenManager(context: Context) {
 
@@ -21,7 +25,7 @@ class AtheerTokenManager(context: Context) {
         private const val PREFS_NAME = "atheer_token_vault_secure"
         private const val KEY_TOKENS_DATA = "offline_tokens_v2"
         
-        private const val SEVEN_DAYS_MS = 7L * 24 * 60 * 60 * 1000
+        private const val DEFAULT_EXPIRY_MS = 7L * 24 * 60 * 60 * 1000
     }
 
     private val prefs: SharedPreferences
@@ -42,23 +46,29 @@ class AtheerTokenManager(context: Context) {
     }
 
     /**
-     * تزويد الرموز مع دعم هيكلية TokenInfo الجديدة
+     * تزويد المخزن بقائمة جديدة من الرموز المميزة المستلمة من السيرفر.
+     * يتم دمج الرموز الجديدة مع المخزون الحالي وحفظها بشكل مشفر.
+     *
+     * @param tokens قائمة الكائنات من نوع [TokenInfo] المراد تخزينها.
      */
     fun provisionTokens(tokens: List<TokenInfo>) {
         if (tokens.isEmpty()) {
-            Log.w(TAG, "تم استدعاء provisionTokens بقائمة فارغة")
+            Log.w(TAG, "تنبيه: محاولة تزويد قائمة رموز فارغة")
             return
         }
         synchronized(this) {
             val existing = loadTokenInfos().toMutableList()
             existing.addAll(tokens)
             saveTokenInfos(existing)
-            Log.i(TAG, "تم تزويد ${tokens.size} رمز - الإجمالي: ${existing.size}")
+            Log.i(TAG, "تم بنجاح تخزين ${tokens.size} رمز جديد. الإجمالي المتوفر: ${existing.size}")
         }
     }
 
     /**
-     * استهلاك الرمز التالي مع التحقق من الصلاحية (expiryDate من السيرفر أو 7 أيام محلياً)
+     * استرجاع الرمز التالي الصالح للاستخدام واستهلاكه من المخزن.
+     * يقوم النظام بالتحقق من تاريخ انتهاء الصلاحية (Expiry Date) لكل رمز قبل إرجاعه.
+     *
+     * @return سلسلة نصية تمثل الرمز (Token Value) إذا وجد رمز صالح، أو null إذا كان المخزن فارغاً.
      */
     fun consumeNextToken(): String? {
         synchronized(this) {
@@ -69,21 +79,21 @@ class AtheerTokenManager(context: Context) {
             while (tokens.isNotEmpty()) {
                 val token = tokens.removeAt(0)
                 
-                // 1. التحقق من تاريخ الانتهاء القادم من السيرفر (إذا وجد)
                 val isServerExpired = token.expiryDate?.let {
                     try {
                         val expiryDate = sdf.parse(it)
                         expiryDate?.before(Date(currentTime)) ?: false
-                    } catch (e: Exception) { false }
+                    } catch (e: Exception) { 
+                        Log.e(TAG, "خطأ في تحليل تاريخ انتهاء الرمز: ${e.message}")
+                        false 
+                    }
                 } ?: false
 
-                // 2. التحقق من الصلاحية المحلية (7 أيام كأمان إضافي)
-                // ملحوظة: نفترض أن الـ ID قد يحتوي على طابع زمني أو نعتمد على تاريخ التنزيل إذا أضفناه، 
-                // لكن هنا سنكتفي بصلاحية السيرفر أو منطق الأعمال.
-                
                 if (!isServerExpired) {
                     saveTokenInfos(tokens)
                     return token.tokenValue
+                } else {
+                    Log.w(TAG, "تم استبعاد رمز منتهي الصلاحية: ${token.tokenValue.take(8)}...")
                 }
             }
             saveTokenInfos(tokens)
@@ -91,6 +101,10 @@ class AtheerTokenManager(context: Context) {
         }
     }
 
+    /**
+     * الحصول على عدد الرموز المتبقية المتوفرة حالياً في المخزن المشفر.
+     * @return عدد الرموز كقيمة صحيحة (Int).
+     */
     fun getTokensCount(): Int = loadTokenInfos().size
 
     private fun loadTokenInfos(): List<TokenInfo> {
@@ -99,6 +113,7 @@ class AtheerTokenManager(context: Context) {
             val type = object : TypeToken<List<TokenInfo>>() {}.type
             gson.fromJson(raw, type)
         } catch (e: Exception) {
+            Log.e(TAG, "فشل في تحميل الرموز المشفرة: ${e.message}")
             emptyList()
         }
     }

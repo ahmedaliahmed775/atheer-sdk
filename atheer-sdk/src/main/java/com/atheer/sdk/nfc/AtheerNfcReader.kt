@@ -12,10 +12,20 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * وحدة قارئ NFC لنظام SoftPOS مع حماية من هجمات التمرير (Relay Attack Mitigation)
+ * ## AtheerNfcReader
+ * محرك قراءة بطاقات الـ NFC المتوافق مع معايير EMVCo لنظام SoftPOS.
+ *
+ * يعتمد الكلاس على بروتوكول ISO-DEP لتبادل وحدات بيانات بروتوكول التطبيق (APDU) مع البطاقة.
+ * يتضمن آليات حماية من هجمات التمرير (Relay Attacks) عبر قياس زمن الاستجابة (RTT).
+ *
+ * @property merchantId معرف التاجر الفريد المرتبط بالعملية.
+ * @property amount المبلغ المطلوب معالجته في العملية.
+ * @property transactionCallback دالة استدعاء راجعة يتم تنفيذها عند نجاح قراءة البيانات وتكوين المعاملة.
+ * @property errorCallback دالة استدعاء راجعة يتم تنفيذها عند حدوث خطأ أثناء عملية القراءة.
  */
 class AtheerNfcReader(
     private val merchantId: String,
+    private val amount: Long,
     private val transactionCallback: (AtheerTransaction) -> Unit,
     private val errorCallback: (Exception) -> Unit
 ) : NfcAdapter.ReaderCallback {
@@ -23,8 +33,7 @@ class AtheerNfcReader(
     companion object {
         private const val TAG = "AtheerNfcReader"
         
-        // 🛡️ حد الأمان لهجمات التمرير: 50 ملي ثانية كأقصى حد لزمن الاستجابة (RTT)
-        // أي تأخير إضافي يشير إلى احتمال تمرير الإشارة عبر الإنترنت (Relay Attack)
+        // 🛡️ حد الأمان الصارم (L1 Level): 50ms تضمن أن البطاقة موجودة فعلياً أمام الجهاز.
         private const val MAX_RELAY_RTT_MS = 50L
 
         private val ATHEER_AID = byteArrayOf(
@@ -47,15 +56,33 @@ class AtheerNfcReader(
 
     private val readerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+    /**
+     * يتم استدعاؤها بواسطة نظام أندرويد عند اكتشاف بطاقة NFC بالقرب من الحساس.
+     * تقوم ببدء معالجة البطاقة في سياق Coroutine منفصل لضمان عدم حظر واجهة المستخدم.
+     *
+     * @param tag كائن البطاقة المكتشفة.
+     */
     override fun onTagDiscovered(tag: Tag?) {
-        Log.i(TAG, "تم اكتشاف بطاقة NFC جديدة...")
         tag ?: return
+        Log.i(TAG, "تم اكتشاف بطاقة. بدء المصافحة الأمنية...")
         readerScope.launch { readNfcTag(tag) }
     }
 
+    /**
+     * الوظيفة الأساسية لقراءة بيانات البطاقة عبر بروتوكول APDU.
+     *
+     * منطق العمل:
+     * 1. الاتصال بالبطاقة باستخدام تقنية IsoDep.
+     * 2. إرسال أمر SELECT APDU لاختيار تطبيق Atheer AID على البطاقة.
+     * 3. قياس زمن الاستجابة (RTT) للتحقق من عدم وجود هجوم تمرير (Relay Attack).
+     * 4. إرسال أمر GET_PAYMENT_DATA لجلب بيانات الدفع المشفرة.
+     * 5. تحويل البيانات المستلمة إلى كائن [AtheerTransaction].
+     *
+     * @param tag كائن البطاقة المراد قراءتها.
+     */
     private suspend fun readNfcTag(tag: Tag) = withContext(Dispatchers.IO) {
         val isoDep = IsoDep.get(tag) ?: run {
-            errorCallback(Exception("ISO-DEP غير مدعوم"))
+            withContext(Dispatchers.Main) { errorCallback(Exception("البطاقة لا تدعم بروتوكول ISO-DEP المالي")) }
             return@withContext
         }
 
@@ -63,67 +90,57 @@ class AtheerNfcReader(
             isoDep.connect()
             isoDep.timeout = TIMEOUT_MS
 
-            // 🕒 قياس زمن الاستجابة (RTT) لاكتشاف هجمات التمرير
             val startTime = System.currentTimeMillis()
-            
-            // الخطوة 1: إرسال SELECT AID
             val selectResponse = isoDep.transceive(SELECT_APDU)
-            
             val rtt = System.currentTimeMillis() - startTime
-            Log.d(TAG, "زمن الاستجابة لـ SELECT AID: $rtt ملي ثانية")
 
-            // 🛡️ فحص حماية التمرير
+            // 🛡️ التحقق من هجوم التمرير (Relay Attack Check)
             if (rtt > MAX_RELAY_RTT_MS) {
-                Log.e(TAG, "🛡️ تم اكتشاف محاولة هجوم تمرير (Relay Attack)! RTT=$rtt ms > $MAX_RELAY_RTT_MS ms")
-                isoDep.close()
-                withContext(Dispatchers.Main) {
-                    errorCallback(SecurityException("انتهاك أمني: تم اكتشاف محاولة تمرير غير مصرح بها للاتصال"))
-                }
-                return@withContext
+                throw SecurityException("انتهاك أمني: زمن الاستجابة ($rtt ms) يتجاوز الحد المسموح. احتمال وجود هجوم تمرير.")
             }
 
             if (!isResponseOk(selectResponse)) {
-                errorCallback(Exception("تطبيق Atheer غير موجود على الجهاز المجاور"))
-                return@withContext
+                throw Exception("تطبيق الدفع (Atheer AID) غير مدعوم في هذه البطاقة")
             }
 
-            // الخطوة 2: طلب بيانات الدفع
+            // طلب بيانات الدفع المشفرة من البطاقة
             val paymentResponse = isoDep.transceive(GET_PAYMENT_DATA_APDU)
 
             if (!isResponseOk(paymentResponse)) {
-                errorCallback(Exception("فشل في استقبال بيانات الدفع"))
-                return@withContext
+                throw Exception("فشل استخراج بيانات الدفع الآمنة")
             }
 
             val paymentData = paymentResponse.copyOfRange(0, paymentResponse.size - 2)
             val paymentToken = String(paymentData, Charsets.UTF_8)
 
             val transaction = AtheerTransaction(
-                transactionId = generateTransactionId(),
-                amount = 0L,
+                transactionId = "TXN_${System.currentTimeMillis()}",
+                amount = amount, // استخدام المبلغ الفعلي الممرر
                 currency = "SAR",
                 merchantId = merchantId,
                 tokenizedCard = paymentToken,
-                nonce = "RECEIVED"
+                nonce = "SECURE_TAP"
             )
 
             withContext(Dispatchers.Main) { transactionCallback(transaction) }
 
         } catch (e: Exception) {
-            Log.e(TAG, "خطأ NFC: ${e.message}")
+            Log.e(TAG, "خطأ أثناء معالجة البطاقة: ${e.message}")
             withContext(Dispatchers.Main) { errorCallback(e) }
         } finally {
-            if (isoDep.isConnected) isoDep.close()
+            try { isoDep.close() } catch (e: Exception) { /* Ignore */ }
         }
     }
 
+    /**
+     * يتحقق مما إذا كان رد البطاقة يشير إلى نجاح العملية (Status Word = 9000).
+     *
+     * @param response مصفوفة البايتات المستلمة من البطاقة.
+     * @return صحيح إذا كان الرد ناجحاً، خطأ خلاف ذلك.
+     */
     private fun isResponseOk(response: ByteArray): Boolean {
-        if (response.size < 2) return false
-        return response[response.size - 2] == STATUS_OK[0] &&
-                response[response.size - 1] == STATUS_OK[1]
+        return response.size >= 2 && 
+               response[response.size - 2] == STATUS_OK[0] &&
+               response[response.size - 1] == STATUS_OK[1]
     }
-
-    private fun generateTransactionId(): String = "TXN_${System.currentTimeMillis()}_${(1000..9999).random()}"
-
-    private fun ByteArray.toHexString(): String = joinToString("") { "%02X".format(it) }
 }

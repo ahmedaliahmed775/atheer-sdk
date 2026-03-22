@@ -4,149 +4,110 @@
 ![المنصة](https://img.shields.io/badge/platform-Android-green)
 ![مستوى API](https://img.shields.io/badge/API%20Level-21%2B-orange)
 
-## نظرة عامة على المشروع
+## نظرة عامة
 
-تُعد Atheer SDK مكتبة Android قوية وآمنة مصممة لتسهيل معالجة المدفوعات الحديثة، مع التركيز على **محاكاة بطاقة المضيف (HCE)**، و**إمكانيات SoftPOS**، و**إدارة المعاملات دون اتصال بالإنترنت**. توفر مجموعة شاملة من الأدوات للمطورين لدمج وظائف دفع آمنة وفعالة وموثوقة في تطبيقات Android الخاصة بهم. 
+تُعد **Atheer SDK** مكتبة Android متطورة ومصممة لتسهيل عمليات الدفع الإلكتروني، مع التركيز على تقنيات **SoftPOS** ومحاكاة بطاقة المضيف (**HCE**). توفر المكتبة بيئة آمنة تماماً لمعالجة المعاملات المالية سواء كنت متصلاً بالإنترنت أو في وضع العمل "دون اتصال".
 
-**التحديث الأخير (v1.1.0):** تم تحديث المكتبة لتتوافق بالكامل مع متطلبات **Atheer Switch V1**، بما في ذلك دعم هيكلية البيانات المسطحة (Flattened Models)، والتوكنز المطورة (`TokenInfo`) والمسارات الجديدة لعمليات الدفع.
-
-هدفنا هو تمكين الشركات والمطورين من خلال حل دفع ليس فقط قويًا ومرنًا، ولكنه يلتزم أيضًا بأعلى معايير الصناعة للأمان والامتثال، مما يتيح تجربة دفع سلسة للمستخدمين النهائيين عبر مقسم أثير المالي.
+تم تحديث هذا الإصدار (v1.1.0) ليتوافق بالكامل مع نظام **Atheer Switch V1**، مما يضمن سرعة المعالجة ودعم أنظمة المحافظ والمقاسم المالية الحديثة.
 
 ## الميزات الرئيسية
 
-تقدم Atheer SDK مجموعة غنية من الميزات المصممة لمعالجة المدفوعات المتقدمة على Android:
+*   **محاكاة بطاقة المضيف (HCE)**: تحويل الهاتف إلى بطاقة دفع لا تلامسية.
+*   **تقنية SoftPOS**: تمكين الأجهزة من استقبال المدفوعات عبر NFC.
+*   **الأمان المتقدم**: تشفير AES-256-GCM باستخدام Android Keystore.
+*   **المزامنة الخلفية**: إرسال المعاملات المخزنة تلقائياً عند توفر الشبكة عبر WorkManager.
+*   **دعم القسائم والتوكنز**: نظام متكامل لإدارة الرموز المميزة (Tokens) مع التحقق من الصلاحية.
+*   **حماية من هجمات التمرير (Relay Attack)**: قياس زمن الاستجابة RTT لضمان وجود البطاقة فعلياً.
 
-*   **محاكاة بطاقة المضيف (HCE)**: تمكن أجهزة Android من العمل كبطاقات دفع، مما يسمح بإجراء معاملات لا تلامسية باستخدام تقنية NFC دون الحاجة إلى عنصر أمان مادي.
-*   **إمكانيات SoftPOS**: تحول الهواتف الذكية القياسية التي تعمل بنظام Android إلى محطات دفع، قادرة على قبول مدفوعات البطاقات مباشرة.
-*   **معالجة الدفع دون اتصال بالإنترنت**: تدعم المعاملات حتى عندما يكون الجهاز غير متصل بالإنترنت، باستخدام الرموز المميزة المجهزة مسبقاً (`TokenInfo`) وخزنة محلية آمنة، مع مزامنة تلقائية بمجرد استعادة الاتصال.
-*   **دعم القسائم الرقمية (Vouchers)**: تدعم المكتبة القسائم الرقمية بمختلف أطوالها، مما يضمن التوافق التام مع أنظمة 'جوالي' و 'فلوسك' والمحافظ اليمنية.
-*   **نظام التوكنز المطور**: استبدال الرموز النصية البسيطة بكائنات `TokenInfo` التي تحمل بيانات مزود الخدمة وتاريخ انتهاء الصلاحية القادم من السيرفر.
-*   **نفق اتصال مجاني عبر APN (Zero-rated Data Tunneling)**: صُممت معمارية الـ SDK لتوجيه المعاملات عبر APN مخصص لضمان عملها بدون الحاجة لرصيد إنترنت قياسي.
-*   **إجراءات أمان متقدمة**:
-    *   **ترويسة الأمان x-atheer-api-key**: تأمين كافة الطلبات الموجهة للمُقسّم بمفتاح التاجر الخاص.
-    *   **تكامل Android Keystore**: يخزن مفاتيح التشفير بأمان، ويحميها من الوصول غير المصرح به.
-    *   **ترميز البيانات (Data Tokenization)**: يحول بيانات البطاقة الحساسة إلى رموز غير حساسة.
-    *   **مسح الذاكرة (Memory Wiping)**: يمسح البيانات الحساسة من الذاكرة فور الاستخدام.
-    *   **توليد Nonce**: يستخدم أرقامًا فريدة تستخدم لمرة واحدة لكل معاملة لمنع هجمات إعادة التشغيل.
-    *   **اكتشاف الروت والمحاكي**: ينفذ فحوصات لمنع تشغيل SDK في بيئات مخترقة.
-    *   **تثبيت الشهادة (Certificate Pinning)**: يضمن الاتصال الآمن مع خوادم الواجهة الخلفية ومنع هجمات MITM.
-*   **قاعدة بيانات المعاملات المحلية**: تخزن تفاصيل المعاملات بأمان محليًا عبر مكتبة Room.
+## التثبيت (Installation)
 
-## نظرة عامة على البنية
+أضف الاعتمادية التالية إلى ملف `build.gradle` (Module-level):
 
-تم تصميم Atheer SDK ببنية معيارية ومتعددة الطبقات لضمان قابلية التوسع وسهولة الصيانة والأمان القوي.
-
-**المكونات المعمارية الرئيسية:**
-
-*   **AtheerSdk (واجهة Facade)**: نقطة الدخول الرئيسية، تنسق التفاعلات بين الوحدات الداخلية وتفرض فحوصات الأمان. في الإصدار الجديد، تدير هذه الواجهة عملية الدفع المسطحة وتمرير رقم هاتف العميل (`customerMobile`).
-*   **وحدة الأمان (`com.atheer.sdk.security`)**:
-    *   **AtheerKeystoreManager**: يدير التشفير وفك التشفير وتوليد الـ Nonce.
-    *   **AtheerTokenManager**: ينفذ خزنة الرموز المميزة مع التحقق من صلاحية `expiryDate` القادم من السيرفر.
-*   **وحدة الشبكة (`com.atheer.sdk.network`)**:
-    *   **AtheerNetworkRouter**: يتعامل مع الاتصالات الآمنة. تم تحديثه ليدعم المسار الجديد `/api/v1/payments/process` وإرسال ترويسة `x-atheer-api-key`.
-    *   **AtheerSyncWorker**: تطبيق `WorkManager` مسؤول عن المزامنة في الخلفية للمعاملات دون اتصال.
-*   **وحدة HCE (`com.atheer.sdk.hce`)**: تطبيق `HostApduService` الذي يمكّن الجهاز من العمل كبطاقة دفع لا تلامسية.
-*   **وحدة النموذج (`com.atheer.sdk.model`)**: تحدد هياكل البيانات المسطحة (Flattened Models) لضمان التوافق مع Atheer Switch V1.
-
-## المتطلبات / المتطلبات المسبقة
-
-*   **Android Studio**: يوصى بأحدث إصدار مستقر.
-*   **Android SDK**: مستوى API 21 (Android 5.0) أو أعلى.
-*   **Kotlin**: تم كتابة SDK بلغة Kotlin.
-*   **جهاز يدعم NFC**: لوظائف HCE و SoftPOS.
-*   **خدمات Google Play**: مطلوبة لفحوصات Integrity API.
-
-## التثبيت والإعداد
-
-### 1. إضافة SDK كاعتمادية
-```kotlin
-// build.gradle.kts (module-level)
+```gradle
 dependencies {
     implementation("com.atheer.sdk:atheer-sdk:1.1.0")
-    implementation("androidx.work:work-runtime-ktx:2.9.0")
-    implementation("androidx.security:security-crypto:1.1.0-alpha06")
-    implementation("com.google.android.play:integrity:1.3.0")
-    implementation("com.scottyab:rootbeer:0.0.8")
 }
 ```
 
-### 2. تكوين الأذونات وخدمة HCE
-يجب إضافة أذونات NFC والإنترنت في `AndroidManifest.xml` وتكوين `AtheerApduService` كما هو موضح في دليل التكامل التقني المرفق.
+تأكد من إضافة الأذونات اللازمة في `AndroidManifest.xml`:
 
-### 3. تهيئة SDK
-قم بتهيئة المكتبة في فئة `Application` مع تمرير الـ `apiKey` الجديد:
+```xml
+<uses-permission android:name="android.permission.NFC" />
+<uses-permission android:name="android.permission.INTERNET" />
+```
+
+## دليل استخدام الدوال الرئيسية
+
+### 1. تهيئة المكتبة (Initialization)
+
+يجب تهيئة المكتبة مرة واحدة في فئة الـ `Application`:
+
 ```kotlin
 AtheerSdk.init(
-    context = context,
-    merchantId = "YOUR_MERCHANT_ID",
-    apiKey = "YOUR_ATHEER_API_KEY", // مفتاح التاجر الإلزامي للترويسات
-    isSandbox = true,
-    enableApnFallback = false
+    context = this,
+    merchantId = "MERCHANT_ID",
+    apiKey = "YOUR_API_KEY",
+    isSandbox = true // استخدم false للإنتاج
 )
 ```
 
-## الاستخدام
+### 2. تنفيذ عملية شحن (Direct Charge)
 
-### `AtheerSdk`
+استخدم الدالة `charge` لإرسال طلب دفع مباشر للسيرفر:
 
-| الطريقة | الوصف |
-| :--- | :--- |
-| `init(context, merchantId, apiKey, isSandbox, ...)` | **(ثابت)** تهيئة SDK وتحديد مفتاح الأمان ورابط المقسم. |
-| `getInstance()` | **(ثابت)** يسترد مثيل Singleton لـ SDK. |
-| `charge(request, accessToken)` | **(تعليق)** ينفذ عملية شحن مباشرة باستخدام الهيكل المسطح والمسار الجديد. |
-| `processTransaction(...)` | يعالج معاملات NFC/HCE مع تشفير البيانات والمزامنة. |
-| `syncPendingTransactions(...)` | يشغل يدويًا مزامنة المعاملات المعلقة دون اتصال. |
-
-### كائن الطلب `ChargeRequest` (المطور)
-تم تحديث كائن الطلب ليصبح مسطحاً (Flattened) مع إضافة حقول إلزامية:
-
-| الحقل | النوع | الوصف |
-| :--- | :--- | :--- |
-| `amount` | `Long` | قيمة الشحن بالوحدة الأساسية. |
-| `currency` | `String` | رمز العملة (مثال: SAR, YER). |
-| `customerMobile` | `String` | **(إلزامي جديد)** رقم هاتف العميل لضمان قبول الطلب. |
-| `atheerToken` | `String` | الرمز المميز (التوكن) المستخدم في العملية. |
-| `agentWallet` | `String?` | معرف محفظة الوكيل (خاص بالمحافظ اليمنية). |
-| `providerName` | `String?` | اسم مزود الخدمة (JAWALI, KURAIMI, etc). |
-
-## معالجة الردود والأخطاء
-
-### حالات الاستجابة (`status`)
-- **`ACCEPTED`**: تم قبول العملية بنجاح.
-- **`REJECTED`**: رفض العملية (بسبب الرصيد أو القيود).
-- **`EXPIRED`**: انتهت صلاحية التوكن أو الطلب.
-
-### نظام الأخطاء الموحد `AtheerError`
 ```kotlin
-when (error) {
-    is AtheerError.InsufficientFunds -> showToast("رصيد محفظتك غير كافٍ.")
-    is AtheerError.InvalidVoucher -> showToast("رمز القسيمة غير صحيح أو منتهي الصلاحية.")
-    is AtheerError.AuthenticationFailed -> Log.e("AtheerSDK", "خطأ في مفتاح الـ API أو صلاحية التاجر.")
-    is AtheerError.NetworkError -> showToast("يرجى التحقق من اتصال الإنترنت.")
-    else -> showToast("حدث خطأ غير معروف.")
+val request = ChargeRequest(
+    amount = 1000L,
+    currency = "SAR",
+    customerMobile = "9665XXXXXXXX",
+    atheerToken = "TOKEN_VALUE",
+    merchantId = "MERCHANT_ID"
+)
+
+val result = AtheerSdk.getInstance().charge(request, "ACCESS_TOKEN")
+result.onSuccess { response ->
+    println("نجاح العملية: ${response.transactionId}")
+}.onFailure { error ->
+    println("فشل العملية: ${error.message}")
 }
 ```
 
-## الأمان
+### 3. معالجة دفع عبر NFC
 
-الأمان هو حجر الزاوية في Atheer SDK:
+عند استخدام `AtheerNfcReader` لقراءة البطاقات:
 
-*   **التشفير (AES-256-GCM)**: يتم تشفير التوكنز في وضع السكون باستخدام `EncryptedSharedPreferences`.
-*   **أمن النقل (TLS 1.2+)**: فرض تشفير كافة البيانات أثناء النقل.
-*   **تثبيت الشهادة (Certificate Pinning)**: منع هجمات الاعتراض (MITM) عبر التحقق من بصمة شهادة السيرفر.
-*   **الترويسات الأمنية**: استخدام `x-atheer-api-key` للتحقق من هوية التاجر في كل طلب.
-*   **ترميز البيانات (Tokenization)**: منع التعامل مع البيانات الحساسة الخام داخل التطبيق.
+```kotlin
+val nfcReader = AtheerNfcReader(
+    merchantId = "MERCHANT_ID",
+    amount = 500L,
+    transactionCallback = { transaction ->
+        // معالجة المعاملة المستلمة
+        AtheerSdk.getInstance().processTransaction(transaction, "ACCESS_TOKEN", 
+            onSuccess = { msg -> println(msg) },
+            onError = { err -> println(err.message) }
+        )
+    },
+    errorCallback = { exception ->
+        println("خطأ NFC: ${exception.message}")
+    }
+)
+```
 
-## المدفوعات دون اتصال بالإنترنت (Offline Payments)
+### 4. المزامنة اليدوية (Manual Sync)
 
-1.  **تزويد الرموز المميزة**: يتم جلب كائنات `TokenInfo` وتخزينها محلياً.
-2.  **المعاملة دون اتصال**: يتم استهلاك التوكن والتحقق من `expiryDate` محلياً.
-3.  **المزامنة**: يقوم `AtheerSyncWorker` بإرسال المعاملات المخزنة للمُقسّم فور توفر الشبكة عبر المسار الجديد.
+لإرسال المعاملات المخزنة يدوياً في أي وقت:
 
-## الاختبار
+```kotlin
+AtheerSdk.getInstance().syncPendingTransactions("ACCESS_TOKEN") { count ->
+    println("تمت مزامنة $count معاملات بنجاح.")
+}
+```
 
-*   **اختبارات الوحدة**: متوفرة في `AtheerSdkTest.kt`.
-*   **محاكاة الشبكة**: يوصى بمحاكاة ردود السيرفر لاختبار حالات الخطأ المختلفة (مثل `403 Forbidden` عند خطأ الـ API Key).
+## الأمان وحماية البيانات
+
+*   **تشفير البيانات الحساسة**: يتم تشفير كافة المبالغ والتوكنز قبل تخزينها في قاعدة البيانات المحلية.
+*   **مسح الذاكرة (Memory Wiping)**: يتم تصفير المصفوفات التي تحتوي على بيانات حساسة فور الانتهاء من استخدامها في الذاكرة العشوائية.
+*   **التحقق من البيئة**: ترفض المكتبة العمل على الأجهزة التي تحتوي على صلاحيات "Root" أو المحاكيات (Emulators) لضمان أعلى مستويات الأمان.
 
 ---
 © 2024 Atheer Pay. جميع الحقوق محفوظة.

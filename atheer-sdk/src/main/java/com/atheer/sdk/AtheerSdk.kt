@@ -17,7 +17,11 @@ import java.util.concurrent.TimeUnit
 import com.atheer.sdk.network.AtheerSyncWorker as AtheerSyncWorker1
 
 /**
- * الواجهة الرئيسية (Facade) لـ Atheer SDK - نسخة مطورة متوافقة مع Atheer Switch V1
+ * ## AtheerSdk
+ * الواجهة الرئيسية (Facade) للمكتبة - توفر وصولاً مركزياً لكافة ميزات نظام Atheer SDK.
+ * 
+ * هذه النسخة (v1.1.0) مطورة لتتوافق مع **Atheer Switch V1** وتدعم هيكلية البيانات المسطحة (Flattened Models).
+ * تدير المكتبة عمليات الدفع عبر NFC، التشفير، التخزين المحلي، والمزامنة الخلفية.
  */
 class AtheerSdk private constructor(
     private val context: Context,
@@ -42,8 +46,14 @@ class AtheerSdk private constructor(
         private var instance: AtheerSdk? = null
 
         /**
-         * تهيئة المكتبة برابط السيرفر الجديد ومفتاح الأمان
-         * @param apiKey مفتاح التاجر (x-atheer-api-key)
+         * تهيئة المكتبة وضبط الإعدادات الأساسية.
+         * يجب استدعاء هذه الدالة مرة واحدة فقط عند بدء تشغيل التطبيق (في فئة Application).
+         *
+         * @param context سياق التطبيق.
+         * @param merchantId معرف التاجر المسجل في نظام أثير.
+         * @param apiKey مفتاح الأمان (x-atheer-api-key) لتأمين ترويسات الطلبات.
+         * @param isSandbox تحديد ما إذا كان التطبيق يعمل في بيئة الاختبار (true) أو الإنتاج (false).
+         * @param enableApnFallback تفعيل توجيه البيانات عبر APN مخصص في حالة عدم وجود رصيد إنترنت.
          */
         fun init(context: Context, merchantId: String, apiKey: String, isSandbox: Boolean = true, enableApnFallback: Boolean = false) {
             Log.i(TAG, "بدء تهيئة Atheer SDK على السيرفر: $PRODUCTION_URL")
@@ -57,6 +67,11 @@ class AtheerSdk private constructor(
             }
         }
 
+        /**
+         * الحصول على النسخة النشطة (Instance) من المكتبة.
+         * @return كائن [AtheerSdk] الوحيد (Singleton).
+         * @throws IllegalStateException إذا لم يتم تهيئة المكتبة باستخدام [init].
+         */
         fun getInstance(): AtheerSdk {
             return instance ?: throw IllegalStateException("يجب استدعاء AtheerSdk.init() أولاً.")
         }
@@ -69,7 +84,13 @@ class AtheerSdk private constructor(
     private val sdkScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     /**
-     * معالجة المعاملة التقليدية (مع تحديث المسار والترويسات)
+     * معالجة معاملة دفع ناتجة عن مسح بطاقة NFC.
+     * تقوم الدالة بتشفير البيانات وتخزينها محلياً قبل محاولة إرسالها للسيرفر.
+     *
+     * @param transaction كائن المعاملة الذي يحتوي على بيانات البطاقة والمبلغ.
+     * @param accessToken رمز الوصول (Bearer Token) الخاص بالمستخدم الحالي.
+     * @param onSuccess دالة استدعاء راجعة عند نجاح العملية.
+     * @param onError دالة استدعاء راجعة عند حدوث خطأ.
      */
     fun processTransaction(
         transaction: AtheerTransaction,
@@ -123,7 +144,12 @@ class AtheerSdk private constructor(
     }
 
     /**
-     * تنفيذ شحن مباشر (Flattened Request Structure)
+     * تنفيذ عملية شحن مباشر (Charge) باستخدام الهيكل المسطح الجديد.
+     * هذه الدالة موجهة لعمليات الدفع التي لا تعتمد على NFC المباشر (مثل إدخال التوكن يدوياً).
+     *
+     * @param request كائن الطلب الذي يحتوي على كافة بيانات الدفع بما في ذلك [customerMobile].
+     * @param accessToken رمز الوصول الخاص بالمستخدم.
+     * @return [Result] يحتوي على [ChargeResponse] في حالة النجاح أو خطأ في حالة الفشل.
      */
     suspend fun charge(request: ChargeRequest, accessToken: String): Result<ChargeResponse> {
         val sensitiveNonce = keystoreManager.generateNonce().toCharArray()
@@ -162,7 +188,11 @@ class AtheerSdk private constructor(
     }
 
     /**
-     * مزامنة المعاملات المعلقة
+     * مزامنة المعاملات المعلقة في قاعدة البيانات المحلية يدوياً.
+     * يتم إرسال كافة المعاملات التي تمت في وضع "بدون اتصال" (Offline) إلى السيرفر.
+     *
+     * @param accessToken رمز الوصول الخاص بالمستخدم.
+     * @param onComplete دالة استدعاء راجعة تعيد عدد المعاملات التي تمت مزامنتها بنجاح.
      */
     fun syncPendingTransactions(accessToken: String, onComplete: (Int) -> Unit) {
         sdkScope.launch {
@@ -204,6 +234,12 @@ class AtheerSdk private constructor(
         }
     }
 
+    /**
+     * جدولة مهمة المزامنة الخلفية باستخدام WorkManager.
+     * يتم تنفيذ المهمة فور توفر اتصال بالإنترنت.
+     *
+     * @param authToken رمز المصادقة اللازم لإرسال الطلبات للسيرفر.
+     */
     fun scheduleBackgroundSync(authToken: String) {
         val constraints = Constraints.Builder()
             .setRequiredNetworkType(NetworkType.CONNECTED)
@@ -223,15 +259,35 @@ class AtheerSdk private constructor(
         WorkManager.getInstance(context).enqueueUniqueWork("AtheerBackgroundSync", ExistingWorkPolicy.REPLACE, syncRequest)
     }
 
+    /**
+     * جلب الحد الأقصى المسموح به للمعاملة القادمة في وضع عدم الاتصال.
+     * يتم استرجاع القيمة من الإعدادات الآمنة المحلية.
+     * 
+     * @return الحد المسموح به كقيمة صحيحة (Int).
+     */
     fun getNextOfflineLimit(): Int {
         val prefs = context.getSharedPreferences("AtheerSecurityPrefs", Context.MODE_PRIVATE)
         return prefs.getInt("OFFLINE_LIMIT", Int.MAX_VALUE)
     }
 
+    /**
+     * مسح حد العمليات "دون اتصال" المخزن محلياً.
+     * تُستدعى هذه الدالة عادةً بعد استهلاك الحد في عملية ناجحة أو عند تحديث البيانات من السيرفر.
+     */
     fun clearOfflineLimit() {
-        context.getSharedPreferences("AtheerSecurityPrefs", Context.MODE_PRIVATE).edit().remove("OFFLINE_LIMIT").apply()
+        context.getSharedPreferences("AtheerSecurityPrefs", Context.MODE_PRIVATE)
+            .edit()
+            .remove("OFFLINE_LIMIT")
+            .apply()
     }
 
+    /**
+     * @return كائن مدير المفاتيح [AtheerKeystoreManager].
+     */
     fun getKeystoreManager() = keystoreManager
+
+    /**
+     * @return كائن مدير الرموز المميزة [AtheerTokenManager].
+     */
     fun getTokenManager() = tokenManager
 }
