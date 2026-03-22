@@ -18,7 +18,7 @@ import java.io.IOException
 import java.util.concurrent.TimeUnit
 
 /**
- * موجه الشبكة المطور لـ Atheer SDK باستخدام OkHttp و Certificate Pinning
+ * موجه الشبكة المطور لـ Atheer SDK باستخدام OkHttp
  */
 class AtheerNetworkRouter(private val context: Context) {
 
@@ -28,10 +28,13 @@ class AtheerNetworkRouter(private val context: Context) {
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
     }
 
+    /* 
+    // تم إيقاف Certificate Pinning مؤقتاً لتسهيل عملية الاختبار مع السيرفرات التطويرية
     private val certificatePinner = CertificatePinner.Builder()
         .add(BASE_DOMAIN, "sha256/7HIpSrxNzqQOK6hzZcl8N0VYRsqDx9Le5tpx3468AlA=")
         .add(BASE_DOMAIN, "sha256/Af8uCAY87z1S9x10G95F63YvX1D4v10G95F63YvX1D4=")
         .build()
+    */
 
     private val client: OkHttpClient by lazy {
         val spec = ConnectionSpec.Builder(ConnectionSpec.MODERN_TLS)
@@ -39,7 +42,7 @@ class AtheerNetworkRouter(private val context: Context) {
             .build()
 
         OkHttpClient.Builder()
-            .certificatePinner(certificatePinner)
+            // .certificatePinner(certificatePinner) // تم التعطيل مؤقتاً
             .connectionSpecs(listOf(spec))
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS)
