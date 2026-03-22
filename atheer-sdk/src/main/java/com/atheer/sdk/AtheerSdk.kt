@@ -30,29 +30,29 @@ class AtheerSdk private constructor(
 
     companion object {
         private const val TAG = "AtheerSdk"
-        
-        // روابط المقاصة المالية المحدثة
-        private const val PRODUCTION_URL = "https://api.atheer-pay.com"
-        private const val SANDBOX_URL = "https://sandbox.atheer-pay.com"
-        
-        // المسار الجديد لعملية الدفع
+
+        // روابط مقسم أثير الخاص بك على السيرفر
+        private const val PRODUCTION_URL = "http://206.189.137.59:3000"
+        private const val SANDBOX_URL = "http://206.189.137.59:3000"
+
+        // المسار المعتمد لعملية الدفع في Atheer Switch V1
         private const val CHARGE_PATH = "/api/v1/payments/process"
 
         @Volatile
         private var instance: AtheerSdk? = null
 
         /**
-         * تهيئة المكتبة
-         * @param apiKey مفتاح التاجر الخاص بـ Atheer Switch
+         * تهيئة المكتبة برابط السيرفر الجديد ومفتاح الأمان
+         * @param apiKey مفتاح التاجر (x-atheer-api-key)
          */
         fun init(context: Context, merchantId: String, apiKey: String, isSandbox: Boolean = true, enableApnFallback: Boolean = false) {
-            Log.i(TAG, "بدء تهيئة Atheer SDK...")
+            Log.i(TAG, "بدء تهيئة Atheer SDK على السيرفر: $PRODUCTION_URL")
 
             if (instance != null) return
             synchronized(this) {
                 if (instance == null) {
                     instance = AtheerSdk(context.applicationContext, merchantId, apiKey, isSandbox, enableApnFallback)
-                    Log.i(TAG, "تمت تهيئة Atheer SDK بنجاح.")
+                    Log.i(TAG, "تمت تهيئة Atheer SDK بنجاح وتوجيهها للمقسم.")
                 }
             }
         }
