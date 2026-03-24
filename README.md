@@ -1,4 +1,4 @@
-# Atheer SDK: معالجة دفع آمنة وسلسة لنظام Android (v1.1.0)
+# Atheer SDK: معالجة دفع آمنة وسلسة لنظام Android (v1.2.0)
 
 ![حالة البناء](https://img.shields.io/badge/build-passing-brightgreen)
 ![المنصة](https://img.shields.io/badge/platform-Android-green)
@@ -6,18 +6,18 @@
 
 ## نظرة عامة
 
-تُعد **Atheer SDK** مكتبة Android متطورة ومصممة لتسهيل عمليات الدفع الإلكتروني، مع التركيز على تقنيات **SoftPOS** ومحاكاة بطاقة المضيف (**HCE**). توفر المكتبة بيئة آمنة تماماً لمعالجة المعاملات المالية سواء كنت متصلاً بالإنترنت أو في وضع العمل "دون اتصال".
+تُعد **Atheer SDK** مكتبة Android متطورة ومصممة لتسهيل عمليات الدفع الإلكتروني، مع التركيز على تقنيات **SoftPOS** ومحاكاة بطاقة المضيف (**HCE**). توفر المكتبة بيئة آمنة تماماً لمعالجة المعاملات المالية عبر الاتصال المباشر واللحظي مع المقسم.
 
-تم تحديث هذا الإصدار (v1.1.0) ليتوافق بالكامل مع نظام **Atheer Switch V1**، مما يضمن سرعة المعالجة ودعم أنظمة المحافظ والمقاسم المالية الحديثة.
+تم تحديث هذا الإصدار (v1.2.0) ليعتمد نظام **الاتصال الفوري الإلزامي (Online-Only)** لضمان أقصى درجات الأمان والتحقق اللحظي من العمليات قبل إتمامها.
 
 ## الميزات الرئيسية
 
-*   **محاكاة بطاقة المضيف (HCE)**: تحويل الهاتف إلى بطاقة دفع لا تلامسية.
-*   **تقنية SoftPOS**: تمكين الأجهزة من استقبال المدفوعات عبر NFC.
-*   **الأمان المتقدم**: تشفير AES-256-GCM باستخدام Android Keystore.
-*   **المزامنة الخلفية**: إرسال المعاملات المخزنة تلقائياً عند توفر الشبكة عبر WorkManager.
-*   **دعم القسائم والتوكنز**: نظام متكامل لإدارة الرموز المميزة (Tokens) مع التحقق من الصلاحية.
-*   **حماية من هجمات التمرير (Relay Attack)**: قياس زمن الاستجابة RTT لضمان وجود البطاقة فعلياً.
+*   **نظام Online-Only**: إلزامية توفر اتصال بالإنترنت عند إجراء أي عملية دفع لضمان التحقق اللحظي من المقسم (Atheer Switch).
+*   **تقنية SoftPOS**: تمكين الأجهزة من استقبال المدفوعات عبر NFC كجهاز نقاط بيع ذكي.
+*   **الأمان المتقدم**: تشفير AES-256-GCM باستخدام Android Keystore مع عدم تخزين أي بيانات معاملات محلياً.
+*   **دعم Offline Payment (للدافع فقط)**: تقتصر ميزة الدفع دون اتصال على "الدافع" (عبر HCE)، بينما يلتزم "المستلم" (SoftPOS) بالاتصال الدائم بالمقسم.
+*   **دعم التحويل عبر APN**: خيار مستقبلي لتوفير الاتصال الإلزامي للمستلم حتى في حالة انعدام رصيد البيانات عبر توجيه حركة المرور لشبكة خاصة (Private APN).
+*   **حماية من هجمات التمرير (Relay Attack)**: قياس زمن الاستجابة RTT لضمان وجود البطاقة فعلياً أمام الجهاز.
 
 ## التثبيت (Installation)
 
@@ -25,7 +25,7 @@
 
 ```gradle
 dependencies {
-    implementation("com.atheer.sdk:atheer-sdk:1.1.0")
+    implementation("com.atheer.sdk:atheer-sdk:1.2.0")
 }
 ```
 
@@ -34,6 +34,7 @@ dependencies {
 ```xml
 <uses-permission android:name="android.permission.NFC" />
 <uses-permission android:name="android.permission.INTERNET" />
+<uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 ```
 
 ## دليل استخدام الدوال الرئيسية
@@ -47,13 +48,14 @@ AtheerSdk.init(
     context = this,
     merchantId = "MERCHANT_ID",
     apiKey = "YOUR_API_KEY",
-    isSandbox = true // استخدم false للإنتاج
+    isSandbox = true,
+    enableApnFallback = true // تفعيل خيار APN عند تعذر الوصول للإنترنت العام
 )
 ```
 
 ### 2. تنفيذ عملية شحن (Direct Charge)
 
-استخدم الدالة `charge` لإرسال طلب دفع مباشر للسيرفر:
+استخدم الدالة `charge` لإرسال طلب دفع مباشر للسيرفر (تتطلب إنترنت):
 
 ```kotlin
 val request = ChargeRequest(
@@ -66,25 +68,25 @@ val request = ChargeRequest(
 
 val result = AtheerSdk.getInstance().charge(request, "ACCESS_TOKEN")
 result.onSuccess { response ->
-    println("نجاح العملية: ${response.transactionId}")
+    println("نجاح العملية والخصم اللحظي: ${response.transactionId}")
 }.onFailure { error ->
     println("فشل العملية: ${error.message}")
 }
 ```
 
-### 3. معالجة دفع عبر NFC
+### 3. معالجة دفع عبر NFC (SoftPOS)
 
-عند استخدام `AtheerNfcReader` لقراءة البطاقات:
+عند استخدام `AtheerNfcReader` لقراءة البطاقات، سيتم طلب التأكيد من السيرفر فوراً:
 
 ```kotlin
 val nfcReader = AtheerNfcReader(
     merchantId = "MERCHANT_ID",
     amount = 500L,
     transactionCallback = { transaction ->
-        // معالجة المعاملة المستلمة
+        // سيقوم SDK بفحص الشبكة وإرسال الطلب فوراً للمقسم
         AtheerSdk.getInstance().processTransaction(transaction, "ACCESS_TOKEN", 
-            onSuccess = { msg -> println(msg) },
-            onError = { err -> println(err.message) }
+            onSuccess = { msg -> println("تم تأكيد الدفع من السيرفر: $msg") },
+            onError = { err -> println("خطأ في العملية أو الشبكة: ${err.message}") }
         )
     },
     errorCallback = { exception ->
@@ -93,21 +95,11 @@ val nfcReader = AtheerNfcReader(
 )
 ```
 
-### 4. المزامنة اليدوية (Manual Sync)
+## ملاحظات هامة
 
-لإرسال المعاملات المخزنة يدوياً في أي وقت:
-
-```kotlin
-AtheerSdk.getInstance().syncPendingTransactions("ACCESS_TOKEN") { count ->
-    println("تمت مزامنة $count معاملات بنجاح.")
-}
-```
-
-## الأمان وحماية البيانات
-
-*   **تشفير البيانات الحساسة**: يتم تشفير كافة المبالغ والتوكنز قبل تخزينها في قاعدة البيانات المحلية.
-*   **مسح الذاكرة (Memory Wiping)**: يتم تصفير المصفوفات التي تحتوي على بيانات حساسة فور الانتهاء من استخدامها في الذاكرة العشوائية.
-*   **التحقق من البيئة**: ترفض المكتبة العمل على الأجهزة التي تحتوي على صلاحيات "Root" أو المحاكيات (Emulators) لضمان أعلى مستويات الأمان.
+*   **إيقاف وضع Offline للمستلم**: تم إزالة كافة آليات "الحفظ ثم المزامنة" لضمان عدم قبول عمليات غير مغطاة مالياً أو مزورة.
+*   **المزامنة الخلفية**: تم تعطيل `AtheerSyncWorker` حيث لم يعد هناك حاجة لمزامنة معاملات قديمة؛ العمليات الآن إما أن تنجح لحظياً أو تفشل فوراً.
+*   **دعم APN**: في حال انقطاع رصيد الإنترنت لدى التاجر، يمكن للمكتبة (إذا تم تفعيل `enableApnFallback`) محاولة الاتصال بالمقسم عبر قناة بيانات مخصصة تضمن وصول طلبات الدفع فقط.
 
 ---
 © 2024 Atheer Pay. جميع الحقوق محفوظة.

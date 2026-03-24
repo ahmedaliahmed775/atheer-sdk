@@ -4,6 +4,7 @@ plugins {
     id("org.jetbrains.kotlin.android")
     id("com.google.devtools.ksp")
     id("maven-publish") // إضافة النشر
+    id("org.jetbrains.dokka")
 }
 
 android {

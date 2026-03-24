@@ -20,7 +20,8 @@ import kotlinx.coroutines.withContext
  *
  * @property merchantId معرف التاجر الفريد المرتبط بالعملية.
  * @property amount المبلغ المطلوب معالجته في العملية.
- * @property transactionCallback دالة استدعاء راجعة يتم تنفيذها عند نجاح قراءة البيانات وتكوين المعاملة.
+ * @property transactionCallback دالة استدعاء راجعة يتم تنفيذها عند نجاح قراءة البيانات وتكوين المعاملة. 
+ * **تنبيه:** في النظام الجديد (Online-Only)، لن يتم إكمال هذه العملية أو تنفيذ التأكيد النهائي للمستخدم إلا بعد استلام استجابة ناجحة لحظياً من المقسم عبر [com.atheer.sdk.AtheerSdk].
  * @property errorCallback دالة استدعاء راجعة يتم تنفيذها عند حدوث خطأ أثناء عملية القراءة.
  */
 class AtheerNfcReader(
@@ -122,6 +123,7 @@ class AtheerNfcReader(
                 nonce = "SECURE_TAP"
             )
 
+            // ملاحظة: استدعاء transactionCallback هنا سيؤدي لاحقاً في AtheerSdk إلى طلب الدفع عبر الإنترنت فوراً.
             withContext(Dispatchers.Main) { transactionCallback(transaction) }
 
         } catch (e: Exception) {
