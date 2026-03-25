@@ -21,6 +21,9 @@ import javax.crypto.spec.GCMParameterSpec
 /**
  * ## AtheerKeystoreManager
  * المستودع المركزي لإدارة المفاتيح التشفيرية داخل بيئة معزولة (TEE/StrongBox).
+ * 
+ * يوفر هذا الكلاس وظائف لتوليد مفاتيح AES للتشفير المتماثل ومفاتيح ECDSA للتوقيع الرقمي،
+ * مع دعم كامل للمصادقة الحيوية (Biometric Authentication).
  */
 class AtheerKeystoreManager {
 
@@ -50,6 +53,7 @@ class AtheerKeystoreManager {
 
     /**
      * توليد مفتاح AES 256-bit للتشفير المحلي.
+     * يتم تخزين المفتاح بشكل آمن داخل Android Keystore.
      */
     private fun generateMasterKey() {
         Log.d(TAG, "جاري إنشاء المفتاح الرئيسي AES...")
@@ -70,7 +74,7 @@ class AtheerKeystoreManager {
 
     /**
      * توليد زوج مفاتيح ECDSA (P-256) للتوقيع الرقمي.
-     * يتطلب مصادقة المستخدم (Biometric) لاستخدام المفتاح الخاص.
+     * يتطلب مصادقة المستخدم (Biometric) لاستخدام المفتاح الخاص لضمان الموثوقية.
      */
     private fun generateAsymmetricKeyPair() {
         Log.d(TAG, "جاري إنشاء زوج مفاتيح ECDSA P-256...")
@@ -89,12 +93,18 @@ class AtheerKeystoreManager {
         kpg.generateKeyPair()
     }
 
+    /**
+     * استرجاع المفتاح السري AES من المستودع الآمن.
+     */
     private fun getMasterKey(): SecretKey {
         val entry = keyStore.getEntry(AES_KEY_ALIAS, null) as? KeyStore.SecretKeyEntry
             ?: throw IllegalStateException("لم يتم العثور على المفتاح AES")
         return entry.secretKey
     }
 
+    /**
+     * استرجاع المفتاح الخاص ECDSA من المستودع الآمن.
+     */
     private fun getPrivateKey(): PrivateKey {
         val entry = keyStore.getEntry(ECC_KEY_ALIAS, null) as? KeyStore.PrivateKeyEntry
             ?: throw IllegalStateException("لم يتم العثور على المفتاح الخاص")
@@ -102,7 +112,7 @@ class AtheerKeystoreManager {
     }
 
     /**
-     * الحصول على المفتاح العام بصيغة Base64 لمشاركته مع الخادم.
+     * الحصول على المفتاح العام بصيغة Base64 لمشاركته مع الخادم للتحقق من التواقيع.
      */
     fun getPublicKey(): String {
         val publicKey = keyStore.getCertificate(ECC_KEY_ALIAS).publicKey
@@ -110,8 +120,8 @@ class AtheerKeystoreManager {
     }
 
     /**
-     * الحصول على كائن Signature مهيأ للتوقيع.
-     * يستخدم مع BiometricPrompt.CryptoObject.
+     * الحصول على كائن Signature مهيأ للتوقيع الرقمي.
+     * يستخدم هذا الكائن لتمريره إلى [androidx.biometric.BiometricPrompt.CryptoObject].
      */
     fun getSignatureInstance(): Signature {
         return Signature.getInstance(SIGNING_ALGORITHM).apply {
@@ -120,7 +130,7 @@ class AtheerKeystoreManager {
     }
 
     /**
-     * التوقيع على البيانات (يستدعى بعد نجاح المصادقة الحيوية).
+     * التوقيع على البيانات النصية باستخدام المفتاح الخاص وكائن Signature المصادق عليه حيويًا.
      */
     fun signData(payload: String, signature: Signature): String {
         signature.update(payload.toByteArray(Charsets.UTF_8))
@@ -128,8 +138,10 @@ class AtheerKeystoreManager {
         return Base64.encodeToString(signatureBytes, Base64.NO_WRAP)
     }
 
-    // --- AES Encryption Logic (Legacy Support) ---
-
+    /**
+     * تشفير نص باستخدام خوارزمية AES/GCM.
+     * يستخدم لحماية التوكنات أثناء النقل عبر NFC.
+     */
     fun encrypt(plainText: String): String {
         val cipher = Cipher.getInstance(AES_TRANSFORMATION)
         cipher.init(Cipher.ENCRYPT_MODE, getMasterKey())
@@ -139,8 +151,12 @@ class AtheerKeystoreManager {
         return Base64.encodeToString(combined, Base64.NO_WRAP)
     }
 
+    /**
+     * فك تشفير نص مشفر مسبقاً باستخدام AES/GCM.
+     */
     fun decrypt(encryptedText: String): String {
         val combined = Base64.decode(encryptedText, Base64.NO_WRAP)
+        if (combined.size < GCM_IV_LENGTH) throw IllegalArgumentException("بيانات مشفرة غير صالحة")
         val iv = combined.copyOfRange(0, GCM_IV_LENGTH)
         val encryptedBytes = combined.copyOfRange(GCM_IV_LENGTH, combined.size)
         val cipher = Cipher.getInstance(AES_TRANSFORMATION)
@@ -150,15 +166,9 @@ class AtheerKeystoreManager {
         return String(decryptedBytes, Charsets.UTF_8)
     }
 
-    fun tokenize(cardData: String): String {
-        return "ATK_${encrypt(cardData)}"
-    }
-
-    fun detokenize(token: String): String {
-        if (!token.startsWith("ATK_")) throw IllegalArgumentException("Invalid token")
-        return decrypt(token.removePrefix("ATK_"))
-    }
-
+    /**
+     * توليد قيمة عشوائية (Nonce) تستخدم لمرة واحدة.
+     */
     fun generateNonce(): String {
         val nonceBytes = ByteArray(16)
         SecureRandom().nextBytes(nonceBytes)
