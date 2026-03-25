@@ -1,5 +1,6 @@
 package com.atheer.sdk.nfc
 
+import android.content.Context
 import android.nfc.NfcAdapter
 import android.nfc.Tag
 import android.nfc.tech.IsoDep
@@ -10,35 +11,43 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.nio.charset.StandardCharsets
 
 /**
  * ## AtheerNfcReader
  * محرك قراءة بطاقات الـ NFC المتوافق مع معايير EMVCo لنظام SoftPOS.
+ * 
+ * يقوم هذا الكلاس بإرسال أوامر APDU لاستخراج بيانات الدفع المشفرة من هاتف العميل،
+ * وتغليفها في كائن معاملة جاهز للإرسال إلى المقسم (Switch).
  */
 class AtheerNfcReader(
-    private val receiverAccount: String, // تم تغيير المسمى ليتوافق مع النموذج الجديد
+    private val context: Context,
+    private val receiverAccount: String,
     private val amount: Long,
-    private val transactionType: String = "PURCHASE",
+    private val transactionType: String = "P2M",
     private val transactionCallback: (AtheerTransaction) -> Unit,
     private val errorCallback: (Exception) -> Unit
 ) : NfcAdapter.ReaderCallback {
 
     companion object {
         private const val TAG = "AtheerNfcReader"
-        private const val MAX_RELAY_RTT_MS = 50L
+        private const val MAX_RELAY_RTT_MS = 150L // الحد الأقصى لزمن الاستجابة
 
+        // المعرف الخاص بتطبيق أثير (AID)
         private val ATHEER_AID = byteArrayOf(
             0xA0.toByte(), 0x00.toByte(), 0x00.toByte(), 0x00.toByte(),
             0x03.toByte(), 0x10.toByte(), 0x10.toByte(), 0x01.toByte()
         )
 
+        // أمر اختيار التطبيق (SELECT AID)
         private val SELECT_APDU = byteArrayOf(
             0x00.toByte(), 0xA4.toByte(), 0x04.toByte(), 0x00.toByte(),
             ATHEER_AID.size.toByte()
         ) + ATHEER_AID
 
+        // أمر جلب بيانات الدفع (GET DATA)
         private val GET_PAYMENT_DATA_APDU = byteArrayOf(
-            0x00.toByte(), 0xCA.toByte(), 0x00.toByte(), 0x01.toByte(), 0xFF.toByte()
+            0x00.toByte(), 0xCA.toByte(), 0x00.toByte(), 0x01.toByte(), 0x00.toByte()
         )
 
         private val STATUS_OK = byteArrayOf(0x90.toByte(), 0x00.toByte())
@@ -49,13 +58,13 @@ class AtheerNfcReader(
 
     override fun onTagDiscovered(tag: Tag?) {
         tag ?: return
-        Log.i(TAG, "تم اكتشاف بطاقة. بدء المصافحة الأمنية...")
+        Log.i(TAG, "تم اكتشاف جهاز عميل. بدء سحب البيانات...")
         readerScope.launch { readNfcTag(tag) }
     }
 
     private suspend fun readNfcTag(tag: Tag) = withContext(Dispatchers.IO) {
         val isoDep = IsoDep.get(tag) ?: run {
-            withContext(Dispatchers.Main) { errorCallback(Exception("البطاقة لا تدعم بروتوكول ISO-DEP المالي")) }
+            withContext(Dispatchers.Main) { errorCallback(Exception("الجهاز لا يدعم بروتوكول ISO-DEP المالي")) }
             return@withContext
         }
 
@@ -63,50 +72,51 @@ class AtheerNfcReader(
             isoDep.connect()
             isoDep.timeout = TIMEOUT_MS
 
-            val startTime = System.currentTimeMillis()
+            // 1. اختيار تطبيق أثير
             val selectResponse = isoDep.transceive(SELECT_APDU)
+            if (!isResponseOk(selectResponse)) {
+                throw Exception("تطبيق أثير غير متوفر على جهاز العميل")
+            }
+
+            // 2. طلب بيانات الدفع المشفرة (Cryptogram)
+            val startTime = System.currentTimeMillis()
+            val paymentResponse = isoDep.transceive(GET_PAYMENT_DATA_APDU)
             val rtt = System.currentTimeMillis() - startTime
 
+            // حماية ضد هجمات الـ Relay
             if (rtt > MAX_RELAY_RTT_MS) {
-                throw SecurityException("انتهاك أمني: زمن الاستجابة ($rtt ms) يتجاوز الحد المسموح.")
+                throw SecurityException("تم رفض العملية: زمن الاستجابة مرتفع جداً ($rtt ms)")
             }
-
-            if (!isResponseOk(selectResponse)) {
-                throw Exception("تطبيق الدفع (Atheer AID) غير مدعوم")
-            }
-
-            val paymentResponse = isoDep.transceive(GET_PAYMENT_DATA_APDU)
 
             if (!isResponseOk(paymentResponse)) {
-                throw Exception("فشل استخراج بيانات الدفع")
+                throw Exception("فشل استلام بيانات الدفع من العميل")
             }
 
-            val paymentData = paymentResponse.copyOfRange(0, paymentResponse.size - 2)
-            val payload = String(paymentData, Charsets.UTF_8)
-            
-            // تقسيم الحمولة المستلمة (tokenId|signature)
-            val parts = payload.split("|")
-            if (parts.size < 2) {
-                throw Exception("بيانات الدفع المستلمة غير صالحة")
-            }
+            // 3. استخراج الحمولة المشفرة
+            val encryptedDataBytes = paymentResponse.copyOfRange(0, paymentResponse.size - 2)
+            val encryptedPayload = String(encryptedDataBytes, StandardCharsets.UTF_8)
 
-            val tokenId = parts[0]
-            val signature = parts[1]
+            Log.d(TAG, "تم استلام البيانات المشفرة بنجاح")
 
+            // إنشاء كائن المعاملة (البيانات المشفرة ستفك في المقسم)
             val transaction = AtheerTransaction(
                 transactionId = "TXN_${System.currentTimeMillis()}",
                 amount = amount,
-                currency = "SAR",
+                currency = "YER",
                 receiverAccount = receiverAccount,
                 transactionType = transactionType,
-                atheerToken = tokenId,
-                signature = signature
+                atheerToken = encryptedPayload, // التوكن والتوقيع المشفرين
+                signature = "ENCRYPTED_NFC_PAYLOAD",
+                authMethod = "BIOMETRIC_CRYPTOGRAM"
             )
 
-            withContext(Dispatchers.Main) { transactionCallback(transaction) }
+            withContext(Dispatchers.Main) {
+                AtheerFeedbackUtils.playSuccessFeedback(context)
+                transactionCallback(transaction)
+            }
 
         } catch (e: Exception) {
-            Log.e(TAG, "خطأ أثناء معالجة البطاقة: ${e.message}")
+            Log.e(TAG, "خطأ في معالجة NFC: ${e.message}")
             withContext(Dispatchers.Main) { errorCallback(e) }
         } finally {
             try { isoDep.close() } catch (e: Exception) { /* Ignore */ }

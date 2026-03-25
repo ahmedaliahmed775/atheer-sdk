@@ -4,18 +4,22 @@ import android.nfc.cardemulation.HostApduService
 import android.os.Bundle
 import android.util.Log
 import com.atheer.sdk.security.AtheerPaymentSession
+import com.atheer.sdk.security.AtheerTokenManager
+import com.atheer.sdk.security.AtheerKeystoreManager
 import com.atheer.sdk.nfc.AtheerFeedbackUtils
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
+import java.nio.charset.StandardCharsets
 
 /**
  * ## AtheerApduService
  * خدمة محاكاة البطاقة المضيفة (HCE) التي تسمح للجهاز بالعمل كبطاقة دفع لا تلامسية.
  *
- * في النسخة المطورة، لا يتم إرسال أي بيانات إلا إذا كانت الجلسة "مسلحة" (Armed) 
- * عبر المصادقة الحيوية المسبقة (Pre-Auth).
+ * التحديث: تدعم الآن جلب التوكنات من المخزن المحلي (AtheerTokenManager) وتشفيرها
+ * قبل إرسالها عبر NFC لضمان حماية البيانات أثناء النقل.
  */
 class AtheerApduService : HostApduService() {
+
+    private val tokenManager by lazy { AtheerTokenManager(applicationContext) }
+    private val keystoreManager by lazy { AtheerKeystoreManager() }
 
     companion object {
         private const val TAG = "AtheerApduService"
@@ -25,7 +29,7 @@ class AtheerApduService : HostApduService() {
 
         private val APDU_OK = byteArrayOf(0x90.toByte(), 0x00.toByte())
         private val APDU_FILE_NOT_FOUND = byteArrayOf(0x6A.toByte(), 0x82.toByte())
-        private val APDU_SESSION_NOT_ARMED = byteArrayOf(0x69.toByte(), 0x85.toByte()) // Conditions of use not satisfied
+        private val APDU_SESSION_NOT_ARMED = byteArrayOf(0x69.toByte(), 0x85.toByte())
         private val APDU_UNKNOWN_ERROR = byteArrayOf(0x6F.toByte(), 0x00.toByte())
     }
 
@@ -38,12 +42,7 @@ class AtheerApduService : HostApduService() {
                 }
 
                 isGetPaymentDataCommand(commandApdu) -> {
-                    if (!AtheerPaymentSession.isSessionArmed()) {
-                        Log.w(TAG, "تم رفض الطلب: الجلسة غير مفعلة (Biometric Pre-Auth required)")
-                        APDU_SESSION_NOT_ARMED
-                    } else {
-                        handleGetPaymentData()
-                    }
+                    handleGetPaymentData()
                 }
 
                 else -> APDU_FILE_NOT_FOUND
@@ -55,26 +54,41 @@ class AtheerApduService : HostApduService() {
     }
 
     /**
-     * معالجة طلب بيانات الدفع وتجهيز الرد الذي يحتوي على التوكن والتوقيع.
+     * معالجة طلب بيانات الدفع.
+     * تبحث أولاً في الجلسة المسلحة (Biometric Auth)، وإذا لم تجدها تبحث عن توكن أوفلاين.
      */
     private fun handleGetPaymentData(): ByteArray {
-        val tokenId = AtheerPaymentSession.getTokenId()
-        val signature = AtheerPaymentSession.getSignature()
+        // 1. محاولة الحصول على بيانات من الجلسة (المصادقة الحيوية)
+        val sessionToken = AtheerPaymentSession.getTokenId()
+        val sessionSignature = AtheerPaymentSession.getSignature()
 
-        return if (tokenId != null && signature != null) {
-            // التغذية الراجعة فور النجاح
+        // تحديد التوكن والتوقيع المستخدم
+        val (finalTokenId, finalSignature) = if (sessionToken != null && sessionSignature != null) {
+            sessionToken to sessionSignature
+        } else {
+            // 2. إذا لم تكن هناك جلسة نشطة، نحاول جلب توكن "أوفلاين" غير مستخدم
+            Log.i(TAG, "لا توجد جلسة نشطة، جاري البحث عن توكن أوفلاين...")
+            val offlineToken = tokenManager.consumeNextToken()
+            offlineToken to "OFFLINE_AUTH"
+        }
+
+        return if (finalTokenId != null) {
+            // التغذية الراجعة فور الاستجابة
             AtheerFeedbackUtils.playSuccessFeedback(applicationContext)
             
-            // دمج التوكن والتوقيع (Cryptogram) ليرسلا للقارئ
-            val payload = "${tokenId}|${signature}"
-            val response = payload.toByteArray(Charsets.UTF_8) + APDU_OK
+            // 3. تجهيز الحمولة وتشفيرها باستخدام Keystore لحمايتها أثناء النقل
+            val rawPayload = "$finalTokenId|$finalSignature"
+            val encryptedPayload = keystoreManager.encrypt(rawPayload)
             
-            // مسح الجلسة فور الاستخدام (One-Tap logic)
+            val response = encryptedPayload.toByteArray(StandardCharsets.UTF_8) + APDU_OK
+            
+            // مسح الجلسة لضمان الاستخدام لمرة واحدة
             AtheerPaymentSession.clearSession()
             
-            Log.i(TAG, "تم إرسال بيانات الدفع بنجاح عبر NFC")
+            Log.i(TAG, "تم تشفير وإرسال بيانات الدفع بنجاح عبر NFC")
             response
         } else {
+            Log.w(TAG, "فشل العملية: لا يوجد توكن متوفر أو الجلسة غير مفعلة")
             APDU_SESSION_NOT_ARMED
         }
     }
@@ -86,6 +100,6 @@ class AtheerApduService : HostApduService() {
         apdu.size >= 2 && apdu[0] == SELECT_APDU_HEADER && apdu[1] == GET_PAYMENT_DATA_INS
 
     override fun onDeactivated(reason: Int) {
-        Log.i(TAG, "إلغاء تفعيل HCE")
+        Log.i(TAG, "إلغاء تفعيل HCE - السبب: $reason")
     }
 }
