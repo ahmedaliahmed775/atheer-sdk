@@ -1,17 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
-    <!-- تم السماح بـ Cleartext مؤقتاً لتسهيل الاختبار مع السيرفرات التطويرية المحلية -->
     <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">206.189.137.59</domain>
+
         <domain includeSubdomains="true">api.atheer.com</domain>
         <domain includeSubdomains="true">api.atheer-pay.com</domain>
         <domain includeSubdomains="true">sandbox.atheer-pay.com</domain>
 
-        <!-- تم تعطيل الـ Pinning هنا أيضاً لتسهيل الاختبار -->
-        <!--
-        <pin-set expiration="2025-12-31">
-            <pin digest="SHA-256">7HIpSrxNzqQOK6hzZcl8N0VYRsqDx9Le5tpx3468AlA=</pin>
-        </pin-set>
-        -->
+        <domain includeSubdomains="true">10.0.2.2</domain>
     </domain-config>
 
     <base-config cleartextTrafficPermitted="false">

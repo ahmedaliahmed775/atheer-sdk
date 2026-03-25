@@ -4,8 +4,15 @@ import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
 import android.util.Log
+import java.security.KeyFactory
+import java.security.KeyPairGenerator
 import java.security.KeyStore
+import java.security.PrivateKey
+import java.security.PublicKey
 import java.security.SecureRandom
+import java.security.Signature
+import java.security.spec.ECGenParameterSpec
+import java.security.spec.X509EncodedKeySpec
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -14,24 +21,18 @@ import javax.crypto.spec.GCMParameterSpec
 /**
  * ## AtheerKeystoreManager
  * المستودع المركزي لإدارة المفاتيح التشفيرية داخل بيئة معزولة (TEE/StrongBox).
- *
- * يوفر هذا الكلاس آلية لتوليد وتخزين واستخدام مفاتيح التشفير بشكل آمن باستخدام Android Keystore System.
- * يتم حماية البيانات الحساسة باستخدام خوارزمية AES-GCM التي تضمن السرية والسلامة.
- *
- * ### ميزات الأمان:
- * 1. **التعمية المعتمدة على العتاد (Hardware-backed):** لا يمكن استخراج المفاتيح خارج وحدة الأمان.
- * 2. **خوارزمية AES-GCM:** توفر تشفيراً موثقاً يمنع التلاعب بالبيانات.
- * 3. **توليد Nonce:** استخدام أرقام عشوائية آمنة لكل معاملة لمنع هجمات إعادة الإرسال.
  */
 class AtheerKeystoreManager {
 
     companion object {
         private const val TAG = "AtheerKeystoreManager"
         private const val ANDROID_KEYSTORE = "AndroidKeyStore"
-        private const val KEY_ALIAS = "AtheerSDK_MasterKey"
-        private const val TRANSFORMATION = "AES/GCM/NoPadding"
-        private const val GCM_TAG_LENGTH = 128 // طول وسم المصادقة لضمان أعلى مستوى أمان
-        private const val GCM_IV_LENGTH = 12   // الطول القياسي لـ IV في GCM لضمان الكفاءة
+        private const val AES_KEY_ALIAS = "AtheerSDK_MasterKey"
+        private const val ECC_KEY_ALIAS = "AtheerSDK_AuthKey"
+        private const val AES_TRANSFORMATION = "AES/GCM/NoPadding"
+        private const val SIGNING_ALGORITHM = "SHA256withECDSA"
+        private const val GCM_TAG_LENGTH = 128
+        private const val GCM_IV_LENGTH = 12
     }
 
     private val keyStore: KeyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply {
@@ -39,29 +40,28 @@ class AtheerKeystoreManager {
     }
 
     init {
-        if (!keyStore.containsAlias(KEY_ALIAS)) {
+        if (!keyStore.containsAlias(AES_KEY_ALIAS)) {
             generateMasterKey()
+        }
+        if (!keyStore.containsAlias(ECC_KEY_ALIAS)) {
+            generateAsymmetricKeyPair()
         }
     }
 
     /**
-     * توليد مفتاح AES 256-bit داخل مخزن المفاتيح الآمن.
-     * يتم ضبط الخصائص لمنع استخدام المفتاح خارج نطاق GCM و NoPadding للامتثال للمعايير المالية.
+     * توليد مفتاح AES 256-bit للتشفير المحلي.
      */
     private fun generateMasterKey() {
-        Log.d(TAG, "جاري إنشاء المفتاح الرئيسي في Android Keystore...")
-        val keyGenerator = KeyGenerator.getInstance(
-            KeyProperties.KEY_ALGORITHM_AES,
-            ANDROID_KEYSTORE
-        )
+        Log.d(TAG, "جاري إنشاء المفتاح الرئيسي AES...")
+        val keyGenerator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE)
         val keySpec = KeyGenParameterSpec.Builder(
-            KEY_ALIAS,
+            AES_KEY_ALIAS,
             KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
         )
             .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
             .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
             .setKeySize(256)
-            .setRandomizedEncryptionRequired(true) // إلزامي لمنع هجمات التكرار
+            .setRandomizedEncryptionRequired(true)
             .build()
 
         keyGenerator.init(keySpec)
@@ -69,26 +69,69 @@ class AtheerKeystoreManager {
     }
 
     /**
-     * يسترجع المفتاح الرئيسي من مخزن المفاتيح.
-     * @return كائن [SecretKey] المستخدم في عمليات التشفير.
-     * @throws IllegalStateException إذا لم يتم العثور على المفتاح.
+     * توليد زوج مفاتيح ECDSA (P-256) للتوقيع الرقمي.
+     * يتطلب مصادقة المستخدم (Biometric) لاستخدام المفتاح الخاص.
      */
+    private fun generateAsymmetricKeyPair() {
+        Log.d(TAG, "جاري إنشاء زوج مفاتيح ECDSA P-256...")
+        val kpg = KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_EC, ANDROID_KEYSTORE)
+        val parameterSpec = KeyGenParameterSpec.Builder(
+            ECC_KEY_ALIAS,
+            KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY
+        )
+            .setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
+            .setDigests(KeyProperties.DIGEST_SHA256)
+            .setUserAuthenticationRequired(true) // يتطلب بصمة لاستخدام المفتاح الخاص
+            .setUserAuthenticationValidityDurationSeconds(-1) // إلزامي لكل عملية (BiometricPrompt)
+            .build()
+
+        kpg.initialize(parameterSpec)
+        kpg.generateKeyPair()
+    }
+
     private fun getMasterKey(): SecretKey {
-        val entry = keyStore.getEntry(KEY_ALIAS, null) as? KeyStore.SecretKeyEntry
-            ?: throw IllegalStateException("لم يتم العثور على المفتاح الرئيسي")
+        val entry = keyStore.getEntry(AES_KEY_ALIAS, null) as? KeyStore.SecretKeyEntry
+            ?: throw IllegalStateException("لم يتم العثور على المفتاح AES")
         return entry.secretKey
     }
 
+    private fun getPrivateKey(): PrivateKey {
+        val entry = keyStore.getEntry(ECC_KEY_ALIAS, null) as? KeyStore.PrivateKeyEntry
+            ?: throw IllegalStateException("لم يتم العثور على المفتاح الخاص")
+        return entry.privateKey
+    }
+
     /**
-     * تشفير النصوص والبيانات الحساسة.
-     *
-     * يتم إنشاء IV (Initialization Vector) عشوائي لكل عملية تشفير ودمجه مع النتيجة.
-     *
-     * @param plainText النص المراد تشفيره.
-     * @return نص مشفر بصيغة Base64 يتضمن IV لضمان فك تشفير صحيح لاحقاً.
+     * الحصول على المفتاح العام بصيغة Base64 لمشاركته مع الخادم.
      */
+    fun getPublicKey(): String {
+        val publicKey = keyStore.getCertificate(ECC_KEY_ALIAS).publicKey
+        return Base64.encodeToString(publicKey.encoded, Base64.NO_WRAP)
+    }
+
+    /**
+     * الحصول على كائن Signature مهيأ للتوقيع.
+     * يستخدم مع BiometricPrompt.CryptoObject.
+     */
+    fun getSignatureInstance(): Signature {
+        return Signature.getInstance(SIGNING_ALGORITHM).apply {
+            initSign(getPrivateKey())
+        }
+    }
+
+    /**
+     * التوقيع على البيانات (يستدعى بعد نجاح المصادقة الحيوية).
+     */
+    fun signData(payload: String, signature: Signature): String {
+        signature.update(payload.toByteArray(Charsets.UTF_8))
+        val signatureBytes = signature.sign()
+        return Base64.encodeToString(signatureBytes, Base64.NO_WRAP)
+    }
+
+    // --- AES Encryption Logic (Legacy Support) ---
+
     fun encrypt(plainText: String): String {
-        val cipher = Cipher.getInstance(TRANSFORMATION)
+        val cipher = Cipher.getInstance(AES_TRANSFORMATION)
         cipher.init(Cipher.ENCRYPT_MODE, getMasterKey())
         val iv = cipher.iv
         val encryptedBytes = cipher.doFinal(plainText.toByteArray(Charsets.UTF_8))
@@ -96,58 +139,26 @@ class AtheerKeystoreManager {
         return Base64.encodeToString(combined, Base64.NO_WRAP)
     }
 
-    /**
-     * فك تشفير البيانات المشفرة مسبقاً بواسطة هذا الكلاس.
-     *
-     * يتم استخراج الـ IV من مقدمة البيانات المشفرة لاستخدامه في التحقق من سلامة الكتلة (Block Integrity).
-     *
-     * @param encryptedText النص المشفر بصيغة Base64.
-     * @return النص الأصلي بعد فك التشفير.
-     */
     fun decrypt(encryptedText: String): String {
         val combined = Base64.decode(encryptedText, Base64.NO_WRAP)
         val iv = combined.copyOfRange(0, GCM_IV_LENGTH)
         val encryptedBytes = combined.copyOfRange(GCM_IV_LENGTH, combined.size)
-        val cipher = Cipher.getInstance(TRANSFORMATION)
+        val cipher = Cipher.getInstance(AES_TRANSFORMATION)
         val spec = GCMParameterSpec(GCM_TAG_LENGTH, iv)
         cipher.init(Cipher.DECRYPT_MODE, getMasterKey(), spec)
         val decryptedBytes = cipher.doFinal(encryptedBytes)
         return String(decryptedBytes, Charsets.UTF_8)
     }
 
-    /**
-     * تحويل بيانات البطاقة إلى رمز (Token) مشفر وغير قابل للقراءة.
-     * نستخدم البادئة ATK_ للتمييز البرمجي السريع وتسهيل عمليات تتبع السجلات دون كشف البيانات.
-     *
-     * @param cardData البيانات الخام للبطاقة.
-     * @return الرمز المميز (Token) المشفر.
-     */
     fun tokenize(cardData: String): String {
-        val encryptedData = encrypt(cardData)
-        return "ATK_${encryptedData}"
+        return "ATK_${encrypt(cardData)}"
     }
 
-    /**
-     * فك تشفير الرمز (Token) واستعادة بيانات البطاقة الأصلية.
-     *
-     * @param token الرمز المشفر الذي يبدأ بـ ATK_.
-     * @return البيانات الأصلية للبطاقة.
-     * @throws IllegalArgumentException إذا كان الرمز لا يحتوي على البادئة الصحيحة.
-     */
     fun detokenize(token: String): String {
-        if (!token.startsWith("ATK_")) {
-            throw IllegalArgumentException("الرمز غير صالح: بادئة مفقودة")
-        }
-        val encryptedData = token.removePrefix("ATK_")
-        return decrypt(encryptedData)
+        if (!token.startsWith("ATK_")) throw IllegalArgumentException("Invalid token")
+        return decrypt(token.removePrefix("ATK_"))
     }
 
-    /**
-     * توليد Nonce (رقم يستخدم لمرة واحدة) باستخدام SecureRandom.
-     * إلزامي في المعاملات المالية لمنع هجمات إعادة الإرسال (Replay Attacks).
-     *
-     * @return سلسلة نصية تمثل الرقم العشوائي الفريد.
-     */
     fun generateNonce(): String {
         val nonceBytes = ByteArray(16)
         SecureRandom().nextBytes(nonceBytes)

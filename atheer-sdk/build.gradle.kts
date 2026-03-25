@@ -35,8 +35,6 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
-    buildToolsVersion = "36.1.0"
-    ndkVersion = "28.2.13676358"
 
     // ✅ يجب إضافة هذا البلوك لتجهيز نسخة الـ Release للنشر
     publishing {
@@ -51,6 +49,7 @@ dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
+    implementation("androidx.biometric:biometric:1.1.0")
     implementation("androidx.work:work-runtime-ktx:2.9.0")
 
     // Room
