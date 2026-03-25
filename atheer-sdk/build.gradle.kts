@@ -35,6 +35,8 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+    buildToolsVersion = "36.1.0"
+    ndkVersion = "28.2.13676358"
 
     // ✅ يجب إضافة هذا البلوك لتجهيز نسخة الـ Release للنشر
     publishing {

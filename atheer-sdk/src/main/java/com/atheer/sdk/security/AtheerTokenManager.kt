@@ -24,6 +24,7 @@ class AtheerTokenManager(context: Context) {
         private const val TAG = "AtheerTokenManager"
         private const val PREFS_NAME = "atheer_token_vault_secure"
         private const val KEY_TOKENS_DATA = "offline_tokens_v2"
+        private const val KEY_OFFLINE_LIMIT = "offline_limit_v2"
         
         private const val DEFAULT_EXPIRY_MS = 7L * 24 * 60 * 60 * 1000
     }
@@ -50,8 +51,9 @@ class AtheerTokenManager(context: Context) {
      * يتم دمج الرموز الجديدة مع المخزون الحالي وحفظها بشكل مشفر.
      *
      * @param tokens قائمة الكائنات من نوع [TokenInfo] المراد تخزينها.
+     * @param limit الحد الأقصى للمبلغ المسموح به لكل رمز.
      */
-    fun provisionTokens(tokens: List<TokenInfo>) {
+    fun provisionTokens(tokens: List<TokenInfo>, limit: Double = 0.0) {
         if (tokens.isEmpty()) {
             Log.w(TAG, "تنبيه: محاولة تزويد قائمة رموز فارغة")
             return
@@ -60,7 +62,8 @@ class AtheerTokenManager(context: Context) {
             val existing = loadTokenInfos().toMutableList()
             existing.addAll(tokens)
             saveTokenInfos(existing)
-            Log.i(TAG, "تم بنجاح تخزين ${tokens.size} رمز جديد. الإجمالي المتوفر: ${existing.size}")
+            saveOfflineLimit(limit)
+            Log.i(TAG, "تم بنجاح تخزين ${tokens.size} رمز جديد. الإجمالي المتوفر: ${existing.size}. الحد: $limit")
         }
     }
 
@@ -106,6 +109,18 @@ class AtheerTokenManager(context: Context) {
      * @return عدد الرموز كقيمة صحيحة (Int).
      */
     fun getTokensCount(): Int = loadTokenInfos().size
+
+    fun getOfflineLimit(): Double {
+        return prefs.getString(KEY_OFFLINE_LIMIT, "0.0")?.toDoubleOrNull() ?: 0.0
+    }
+
+    fun clearOfflineLimit() {
+        prefs.edit().remove(KEY_OFFLINE_LIMIT).apply()
+    }
+
+    private fun saveOfflineLimit(limit: Double) {
+        prefs.edit().putString(KEY_OFFLINE_LIMIT, limit.toString()).apply()
+    }
 
     private fun loadTokenInfos(): List<TokenInfo> {
         val raw = prefs.getString(KEY_TOKENS_DATA, null) ?: return emptyList()

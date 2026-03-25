@@ -66,13 +66,13 @@ class AtheerApduService : HostApduService() {
                 isGetPaymentDataCommand(commandApdu) -> {
                     // استخراج المبلغ وحفظه في مصفوفة قابلة للمسح
                     sensitiveAmountBuffer[0] = extractAmountFromApdu(commandApdu)
-                    val userLimit = AtheerSdk.getInstance().getNextOfflineLimit()
+                    val userLimit: Double = AtheerSdk.getInstance().getNextOfflineLimit()
 
                     if (sensitiveAmountBuffer[0] > userLimit) {
                         Log.w(TAG, "تم رفض العملية: المبلغ يتجاوز الحد")
                         sendBroadcast(Intent("com.atheer.sdk.ACTION_PAYMENT_REJECTED").apply {
                             putExtra("amount", sensitiveAmountBuffer[0])
-                            putExtra("limit", userLimit.toDouble())
+                            putExtra("limit", userLimit)
                         })
                         APDU_REJECTED_AMOUNT
                     } else {

@@ -199,6 +199,10 @@ class AtheerSdk private constructor(
         WorkManager.getInstance(context).cancelUniqueWork("AtheerBackgroundSync")
     }
 
+    fun getNextOfflineLimit(): Double = tokenManager.getOfflineLimit()
+
+    fun clearOfflineLimit() = tokenManager.clearOfflineLimit()
+
     fun getKeystoreManager() = keystoreManager
     fun getTokenManager() = tokenManager
 }
