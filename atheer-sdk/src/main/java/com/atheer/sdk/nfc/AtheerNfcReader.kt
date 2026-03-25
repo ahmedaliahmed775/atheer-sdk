@@ -6,6 +6,8 @@ import android.nfc.Tag
 import android.nfc.tech.IsoDep
 import android.util.Log
 import com.atheer.sdk.model.AtheerTransaction
+import com.atheer.sdk.model.ChargeRequest
+import com.atheer.sdk.security.AtheerKeystoreManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -15,41 +17,25 @@ import java.nio.charset.StandardCharsets
 
 /**
  * ## AtheerNfcReader
- * محرك قراءة بطاقات الـ NFC المتوافق مع معايير EMVCo لنظام SoftPOS.
+ * محرك قراءة بطاقات الـ NFC لنظام SoftPOS المتوافق مع متطلبات المحافظ اليمنية.
  * 
- * يقوم هذا الكلاس بإرسال أوامر APDU لاستخراج بيانات الدفع المشفرة من هاتف العميل،
- * وتغليفها في كائن معاملة جاهز للإرسال إلى المقسم (Switch).
+ * يقوم هذا الكلاس باستلام البيانات المشفرة وبناء كائن [ChargeRequest] متكامل للمقسم.
  */
 class AtheerNfcReader(
     private val context: Context,
-    private val receiverAccount: String,
+    private val merchantId: String, // معرف التاجر المستلم
+    private val receiverAccount: String, // رقم هاتف التاجر أو POS
     private val amount: Long,
     private val transactionType: String = "P2M",
-    private val transactionCallback: (AtheerTransaction) -> Unit,
+    private val transactionCallback: (ChargeRequest) -> Unit, // تم تغيير المخرجات لـ ChargeRequest
     private val errorCallback: (Exception) -> Unit
 ) : NfcAdapter.ReaderCallback {
 
     companion object {
         private const val TAG = "AtheerNfcReader"
-        private const val MAX_RELAY_RTT_MS = 150L // الحد الأقصى لزمن الاستجابة
-
-        // المعرف الخاص بتطبيق أثير (AID)
-        private val ATHEER_AID = byteArrayOf(
-            0xA0.toByte(), 0x00.toByte(), 0x00.toByte(), 0x00.toByte(),
-            0x03.toByte(), 0x10.toByte(), 0x10.toByte(), 0x01.toByte()
-        )
-
-        // أمر اختيار التطبيق (SELECT AID)
-        private val SELECT_APDU = byteArrayOf(
-            0x00.toByte(), 0xA4.toByte(), 0x04.toByte(), 0x00.toByte(),
-            ATHEER_AID.size.toByte()
-        ) + ATHEER_AID
-
-        // أمر جلب بيانات الدفع (GET DATA)
-        private val GET_PAYMENT_DATA_APDU = byteArrayOf(
-            0x00.toByte(), 0xCA.toByte(), 0x00.toByte(), 0x01.toByte(), 0x00.toByte()
-        )
-
+        private val ATHEER_AID = byteArrayOf(0xA0.toByte(), 0x00.toByte(), 0x00.toByte(), 0x00.toByte(), 0x03.toByte(), 0x10.toByte(), 0x10.toByte(), 0x01.toByte())
+        private val SELECT_APDU = byteArrayOf(0x00.toByte(), 0xA4.toByte(), 0x04.toByte(), 0x00.toByte(), ATHEER_AID.size.toByte()) + ATHEER_AID
+        private val GET_PAYMENT_DATA_APDU = byteArrayOf(0x00.toByte(), 0xCA.toByte(), 0x00.toByte(), 0x01.toByte(), 0x00.toByte())
         private val STATUS_OK = byteArrayOf(0x90.toByte(), 0x00.toByte())
         private const val TIMEOUT_MS = 5000
     }
@@ -63,10 +49,7 @@ class AtheerNfcReader(
     }
 
     private suspend fun readNfcTag(tag: Tag) = withContext(Dispatchers.IO) {
-        val isoDep = IsoDep.get(tag) ?: run {
-            withContext(Dispatchers.Main) { errorCallback(Exception("الجهاز لا يدعم بروتوكول ISO-DEP المالي")) }
-            return@withContext
-        }
+        val isoDep = IsoDep.get(tag) ?: return@withContext
 
         try {
             isoDep.connect()
@@ -74,58 +57,42 @@ class AtheerNfcReader(
 
             // 1. اختيار تطبيق أثير
             val selectResponse = isoDep.transceive(SELECT_APDU)
-            if (!isResponseOk(selectResponse)) {
-                throw Exception("تطبيق أثير غير متوفر على جهاز العميل")
-            }
+            if (!isResponseOk(selectResponse)) throw Exception("تطبيق أثير غير متوفر")
 
-            // 2. طلب بيانات الدفع المشفرة (Cryptogram)
-            val startTime = System.currentTimeMillis()
+            // 2. طلب بيانات الدفع
             val paymentResponse = isoDep.transceive(GET_PAYMENT_DATA_APDU)
-            val rtt = System.currentTimeMillis() - startTime
+            if (!isResponseOk(paymentResponse)) throw Exception("فشل استلام البيانات")
 
-            // حماية ضد هجمات الـ Relay
-            if (rtt > MAX_RELAY_RTT_MS) {
-                throw SecurityException("تم رفض العملية: زمن الاستجابة مرتفع جداً ($rtt ms)")
-            }
-
-            if (!isResponseOk(paymentResponse)) {
-                throw Exception("فشل استلام بيانات الدفع من العميل")
-            }
-
-            // 3. استخراج الحمولة المشفرة
+            // 3. استخراج البيانات المشفرة
             val encryptedDataBytes = paymentResponse.copyOfRange(0, paymentResponse.size - 2)
             val encryptedPayload = String(encryptedDataBytes, StandardCharsets.UTF_8)
 
-            Log.d(TAG, "تم استلام البيانات المشفرة بنجاح")
-
-            // إنشاء كائن المعاملة (البيانات المشفرة ستفك في المقسم)
-            val transaction = AtheerTransaction(
-                transactionId = "TXN_${System.currentTimeMillis()}",
+            // 4. بناء طلب الدفع الجديد المتوافق مع المحافظ اليمنية والمقسم
+            val chargeRequest = ChargeRequest(
                 amount = amount,
                 currency = "YER",
+                merchantId = merchantId,
                 receiverAccount = receiverAccount,
+                transactionRef = "REF_${System.currentTimeMillis()}", // توليد مرجع فريد
                 transactionType = transactionType,
-                atheerToken = encryptedPayload, // التوكن والتوقيع المشفرين
-                signature = "ENCRYPTED_NFC_PAYLOAD",
-                authMethod = "BIOMETRIC_CRYPTOGRAM"
+                atheerToken = encryptedPayload, // الحمولة المشفرة (توكن + توقيع)
+                signature = "NFC_SECURE_PAYLOAD",
+                description = "عملية دفع عبر أثير SDK"
             )
 
             withContext(Dispatchers.Main) {
                 AtheerFeedbackUtils.playSuccessFeedback(context)
-                transactionCallback(transaction)
+                transactionCallback(chargeRequest)
             }
 
         } catch (e: Exception) {
-            Log.e(TAG, "خطأ في معالجة NFC: ${e.message}")
+            Log.e(TAG, "خطأ NFC: ${e.message}")
             withContext(Dispatchers.Main) { errorCallback(e) }
         } finally {
-            try { isoDep.close() } catch (e: Exception) { /* Ignore */ }
+            try { isoDep.close() } catch (e: Exception) {}
         }
     }
 
-    private fun isResponseOk(response: ByteArray): Boolean {
-        return response.size >= 2 && 
-               response[response.size - 2] == STATUS_OK[0] &&
-               response[response.size - 1] == STATUS_OK[1]
-    }
+    private fun isResponseOk(response: ByteArray) = 
+        response.size >= 2 && response[response.size - 2] == STATUS_OK[0] && response[response.size - 1] == STATUS_OK[1]
 }
