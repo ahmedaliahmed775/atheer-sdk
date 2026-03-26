@@ -5,9 +5,7 @@ import android.nfc.NfcAdapter
 import android.nfc.Tag
 import android.nfc.tech.IsoDep
 import android.util.Log
-import com.atheer.sdk.model.AtheerTransaction
 import com.atheer.sdk.model.ChargeRequest
-import com.atheer.sdk.security.AtheerKeystoreManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -20,14 +18,16 @@ import java.nio.charset.StandardCharsets
  * محرك قراءة بطاقات الـ NFC لنظام SoftPOS المتوافق مع متطلبات المحافظ اليمنية.
  * 
  * يقوم هذا الكلاس باستلام البيانات المشفرة وبناء كائن [ChargeRequest] متكامل للمقسم.
+ * تم تحديثه ليدعم العملات المتغيرة وأرقام المرجع الفريدة.
  */
 class AtheerNfcReader(
     private val context: Context,
     private val merchantId: String, // معرف التاجر المستلم
     private val receiverAccount: String, // رقم هاتف التاجر أو POS
     private val amount: Long,
+    private val currency: String = "YER", // العملة المختارة من واجهة المستخدم
     private val transactionType: String = "P2M",
-    private val transactionCallback: (ChargeRequest) -> Unit, // تم تغيير المخرجات لـ ChargeRequest
+    private val transactionCallback: (ChargeRequest) -> Unit,
     private val errorCallback: (Exception) -> Unit
 ) : NfcAdapter.ReaderCallback {
 
@@ -67,17 +67,17 @@ class AtheerNfcReader(
             val encryptedDataBytes = paymentResponse.copyOfRange(0, paymentResponse.size - 2)
             val encryptedPayload = String(encryptedDataBytes, StandardCharsets.UTF_8)
 
-            // 4. بناء طلب الدفع الجديد المتوافق مع المحافظ اليمنية والمقسم
+            // 4. بناء طلب الدفع المطور (متوافق مع المقسم والمحافظ اليمنية)
             val chargeRequest = ChargeRequest(
                 amount = amount,
-                currency = "YER",
+                currency = currency, // استخدام العملة الممرة في الكونسرتكتور
                 merchantId = merchantId,
                 receiverAccount = receiverAccount,
-                transactionRef = "REF_${System.currentTimeMillis()}", // توليد مرجع فريد
+                transactionRef = "REF_${System.currentTimeMillis()}", // توليد مرجع فريد لحظي
                 transactionType = transactionType,
-                atheerToken = encryptedPayload, // الحمولة المشفرة (توكن + توقيع)
+                atheerToken = encryptedPayload,
                 signature = "NFC_SECURE_PAYLOAD",
-                description = "عملية دفع عبر أثير SDK"
+                description = "عملية دفع عبر أثير SDK - SoftPOS"
             )
 
             withContext(Dispatchers.Main) {
