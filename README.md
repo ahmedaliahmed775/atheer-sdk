@@ -1,89 +1,37 @@
-# مكتبة أثير (Atheer SDK) 💳 - النسخة الأمنية المطورة
+Atheer SDKمكتبة Android للدفع الآمن عبر NFCAtheer SDK هي مكتبة Android مكتوبة بـ Kotlin، مخصصة لتوفير طبقة دفع آمنة تعمل مع Atheer Switch Backend.تقوم المكتبة بإدارة:المفاتيح الآمنة داخل Android Keystore.التحقق من سلامة الجهاز.التوقيع الأمني للعمليات.الاتصال عبر NFC.تخزين البيانات محليًا.إرسال الطلبات إلى خادم Atheer Switch.الهدف من المكتبةتهدف هذه المكتبة إلى تمكين تطبيقات Android من تنفيذ تدفق دفع آمن يعتمد على:التحقق من هوية الجهاز.حماية المفاتيح داخل العتاد الآمن.إنشاء أرقام متسلسلة Counter لمنع إعادة الإرسال.دعم NFC كقناة تواصل سريعة.ربط التطبيق بخادم التحويل المركزي.أهم المكونات1) إدارة المفاتيح والأمانتستخدم المكتبة Android Keystore لحفظ الأسرار الحساسة بشكل آمن، مع آليات إضافية مثل:Root detection.BiometricPrompt.Play Integrity أو آليات تحقق مشابهة.إدارة Session مؤقتة للمدفوعات.2) طبقة NFCتدعم المكتبة:HCE على جهاز المستخدم.NFC Reader على جهاز الطرف الآخر.وهذا يسمح بتمرير بيانات الدفع بطريقة قصيرة وسريعة وآمنة.3) طبقة الشبكةتوجد طبقة اتصال مع backend مسؤولة عن:إرسال طلبات Charge.استلام الاستجابات.تحويل أخطاء الشبكة إلى نماذج مفهومة للتطبيق.4) التخزين المحليتستخدم المكتبة قاعدة بيانات محلية لتخزين:سجل العمليات.حالات المزامنة.بيانات يمكن الرجوع إليها عند عدم توفر الشبكة.هيكل المشروعatheer-sdk/
+├── atheer-sdk/
+│   └── src/main/
+│       ├── java/com/atheer/sdk/
+│       │   ├── AtheerSdk.kt
+│       │   ├── AtheerPaymentSettingsActivity.kt
+│       │   ├── database/
+│       │   ├── hce/
+│       │   ├── model/
+│       │   ├── network/
+│       │   ├── nfc/
+│       │   └── security/
+│       ├── res/
+│       └── AndroidManifest.xml
+├── build.gradle.kts
+└── settings.gradle.kts
+كيفية عمل المكتبةعند بدء جلسة الدفع:يتم التحقق من سلامة الجهاز.يتم فتح جلسة دفع آمنة.يتم إنشاء أو تحديث العداد Counter.يتم اشتقاق مفتاح محدود الاستخدام LUK.يتم توقيع البيانات.يتم تمرير الحمولة عبر NFC أو إرسالها عبر الشبكة.يتم استدعاء Backend للتنفيذ النهائي للعملية.المكونات البرمجيةAtheerSdk.ktالواجهة الرئيسية للمكتبة.تجمع بين الأمان، NFC، الشبكة، ونماذج الطلبات.AtheerKeystoreManagerمسؤول عن إدارة المفاتيح داخل Android Keystore وتوليد/حماية الأسرار.AtheerPaymentSessionيحفظ حالة الجلسة المؤقتة أثناء تنفيذ عملية الدفع.AtheerNfcReaderيقرأ البيانات القادمة عبر NFC ويتعامل معها قبل إرسالها للخادم.AtheerApduServiceخدمة HCE التي تسمح للهاتف بالتصرف كأنه بطاقة أو وسيط دفع.AtheerNetworkRouterمسؤول عن التواصل مع Atheer Switch Backend.AtheerCellularRouterيوفر مسارًا إضافيًا عبر الشبكة الخلوية عند الحاجة.AtheerDatabaseقاعدة البيانات المحلية للمكتبة.نماذج البياناتتحتوي المكتبة على نماذج واضحة لطلبات واستجابات الدفع، مثل:ChargeRequestChargeResponseLoginRequestLoginResponseSignupRequestSignupResponseBalanceResponseHistoryResponseAtheerTransactionAtheerErrorالتكامل مع السويتشهذه المكتبة مصممة لتعمل مع Atheer Switch Backend بشكل مباشر.من جهة SDK:تنشئ طلب الدفع.توقّع البيانات.ترسل deviceId وcounter وtimestamp وsignature.من جهة Backend:يتحقق من التوقيع.يمنع التكرار.يعالج الطلب.يعيد النتيجة.هذا التكامل هو ما يجعل المنظومة كاملة وآمنة.التثبيتإذا كنت تستخدم Gradle كنظام بناء، أضف المكتبة إلى مشروعك حسب آلية النشر المعتمدة لديك، ثم استدعِ الحزمة من التطبيق.مثال استخدامval sdk = AtheerSdk.initialize(context)
 
-![الأمان](https://img.shields.io/badge/Security-Zero--Trust-red)
-![التشفير](https://img.shields.io/badge/Crypto-Dynamic--LUK-blue)
-![المنصة](https://img.shields.io/badge/Platform-Android-green)
-![النسخة](https://img.shields.io/badge/Version-2.0.0-orange)
+val request = ChargeRequest(
+    deviceId = "DEVICE-123",
+    counter = 10,
+    timestamp = System.currentTimeMillis(),
+    signature = "SIGNATURE",
+    amount = 1500.0,
+    currency = "YER",
+    receiverAccount = "merchant_001",
+    transactionType = "P2M"
+)
 
-مكتبة **Atheer SDK** هي المحرك البرمجي المتطور لنظام أثير للدفع، تم ترقيتها في الإصدار 2.0.0 من معمارية التوكنات المسبقة (Pre-fetched Tokens) إلى معمارية **Zero-Trust Dynamic Key Derivation**. تضمن هذه المعمارية أماناً مطلقاً وقدرة على تنفيذ عمليات دفع "أوفلاين" لا نهائية دون الحاجة للاتصال المسبق بالسيرفر.
-
----
-
-## 🛡️ المعمارية الأمنية الجديدة (Zero-Trust)
-
-تعتمد المكتبة الآن على أربعة ركائز أمنية أساسية:
-
-### 1. اشتقاق المفاتيح الديناميكي (LUK)
-*   **Master Seed**: يتم توليد زوج مفاتيح (Ed25519/AES-256) وتخزينه في الـ Android Hardware-backed Keystore (TEE/StrongBox) عند أول تشغيل.
-*   **Monotonic Counter**: عداد رتيب لا ينقص أبداً، مخزن في `EncryptedSharedPreferences`.
-*   **Limited Use Key (LUK)**: لكل عملية دفع، يتم اشتقاق مفتاح فريد باستخدام `HMAC-SHA256(MasterSeed, Counter)`. هذا يمنع هجمات إعادة التشغيل (Replay Attacks) تماماً.
-
-### 2. حماية المسافة (NFC Distance Bounding)
-*   **RTT Measurement**: يقوم الـ SDK بقياس زمن الرحلة الذهاب والإياب (Round-Trip Time) أثناء مصافحة الـ NFC.
-*   **Relay Attack Prevention**: إذا تجاوز الـ RTT حاجز الـ **50ms**، يتم إيقاف العملية فوراً ورمي `RelayAttackException` لمنع هجمات الترحيل عبر الإنترنت.
-
-### 3. نزاهة الجهاز (Device Integrity)
-*   **Google Play Integrity API**: يتم التحقق من سلامة بيئة التشغيل عند كل تهيئة للـ SDK.
-*   **Root Detection**: يتم حظر العمل على الأجهزة المروتة (Rooted) أو المحاكيات (Emulators) لضمان بيئة تنفيذ آمنة.
-
-### 4. المصادقة البيومترية القوية
-*   تكامل مع `Android BiometricPrompt` (Strong Biometrics) لتفويض كل عملية اشتقاق مفتاح وتوقيع Payload.
-
----
-
-## 📁 خريطة وملفات المشروع المحدثة
-
-### 🔹 الحزمة الرئيسية (`com.atheer.sdk`)
-*   **`AtheerSdk.kt`**: نقطة الدخول الرئيسية، تدير التحقق من النزاهة (Play Integrity) والمصادقة البيومترية.
-
-### 🔹 الأمان والتشفير (`com.atheer.sdk.security`)
-*   **`AtheerKeystoreManager.kt`**: قلب النظام التشفيري، يدير الـ Master Seed واشتقاق الـ LUK والعداد الرتيب.
-*   **`AtheerPaymentSession.kt`**: إدارة الجلسة المؤقتة للبيانات الموقعة (60 ثانية).
-
-### 🔹 التواصل والشبكة (`com.atheer.sdk.nfc` & `hce`)
-*   **`AtheerApduService.kt`**: خدمة HCE لإرسال الـ Payload الموقع عبر NFC.
-*   **`AtheerNfcReader.kt`**: محرك القراءة (SoftPOS) مع ميزة قياس الـ RTT لمنع الـ Relay Attacks.
-
----
-
-## 🚀 التثبيت والتهيئة
-
-### 1. إضافة المستودع والتبعية
-```kotlin
-repositories {
-    maven { url = uri("https://maven.pkg.github.com/ahmedaliahmed775/atheer-sdk") }
+sdk.charge(request) { result ->
+    if (result.isSuccess) {
+        // تم تنفيذ العملية بنجاح
+    } else {
+        // معالجة الخطأ
+    }
 }
-
-dependencies {
-    implementation("com.github.ahmedaliahmed775:atheer-sdk:2.0.0")
-}
-```
-
-### 2. التهيئة الآمنة
-يجب استدعاء `init` في الـ `Application class`. ستقوم الدالة تلقائياً بالتحقق من الـ Root ونزاهة الجهاز.
-
-```kotlin
-try {
-    AtheerSdk.init(
-        context = this,
-        merchantId = "YOUR_MERCHANT_ID",
-        apiKey = "YOUR_API_KEY",
-        isSandbox = true
-    )
-} catch (e: SecurityException) {
-    // الجهاز غير آمن (Rooted) - يجب إغلاق التطبيق أو تقييد الميزات
-}
-```
-
----
-
-## 🔐 المتطلبات التقنية
-*   **Android 7.0 (API 24)+**
-*   **Hardware-backed Keystore Support**
-*   **NFC & Biometric Hardware**
-*   **Google Play Services** (لـ Play Integrity API)
-
----
-
-## ⚖️ الترخيص
-جميع الحقوق محفوظة لنظام أثير © 2026. مرخص بموجب [MIT License](LICENSE.txt).
+الأمانالمكتبة تعتمد على عدة طبقات حماية، منها:حفظ الأسرار داخل Keystore.التحقق البيومتري.التحقق من حالة الجهاز.استخدام counter يمنع إعادة استخدام نفس الرسالة.التوقيع الرقمي لكل معاملة.المساهمةيمكنك توسيع المكتبة بإضافة:مزيد من مزودي الشبكة.دعم أنواع إضافية من العمليات.تحسينات في التحقق الأمني.توسيع نماذج الاستجابات والأخطاء.الترخيصراجع ملفات الترخيص الموجودة في المستودع.
