@@ -2,7 +2,7 @@
 
 # Atheer SDK
 
-**A robust and secure Android library for processing payments via Host Card Emulation (HCE) and SoftPOS technology, with advanced offline-capable transaction support.**
+**مكتبة Android متكاملة وآمنة لمعالجة المدفوعات عبر تقنية محاكاة البطاقة المضيفة (HCE) وتقنية SoftPOS، مع دعم متقدم للمعاملات.**
 
 [![Android API](https://img.shields.io/badge/API-24%2B-brightgreen.svg)](https://android-arsenal.com/api?level=24)
 [![Kotlin](https://img.shields.io/badge/Kotlin-1.9.23-blue.svg)](https://kotlinlang.org)
@@ -13,128 +13,128 @@
 
 ---
 
-## Table of Contents
+## فهرس المحتويات
 
-1. [Project Overview](#project-overview)
-2. [Architecture](#architecture)
-3. [Features](#features)
-4. [Prerequisites](#prerequisites)
-5. [Installation](#installation)
-6. [Required Permissions](#required-permissions)
-7. [Quick Start](#quick-start)
-8. [Usage](#usage)
-   - [Payer Side — HCE (Host Card Emulation)](#payer-side--hce-host-card-emulation)
-   - [Merchant Side — SoftPOS NFC Reader](#merchant-side--softpos-nfc-reader)
-   - [Direct Charge (Online)](#direct-charge-online)
-   - [Error Handling](#error-handling)
-9. [Payment Flow](#payment-flow)
-10. [Data Models](#data-models)
-11. [Security Model](#security-model)
-12. [Project Structure](#project-structure)
-13. [Contributing](#contributing)
-14. [License](#license)
-
----
-
-## Project Overview
-
-**Atheer SDK** is an Android library written in Kotlin that provides a complete, hardware-backed payment layer for applications integrating with the **Atheer Switch Backend**. It enables two complementary payment modes:
-
-| Mode | Description |
-|------|-------------|
-| **HCE (Payer)** | The payer's device emulates a contactless payment card. The SDK arms a cryptographically signed payment session and transmits it over NFC tap. |
-| **SoftPOS (Merchant)** | The merchant's device acts as an NFC terminal reader. The SDK reads, validates, and submits the signed payment data to the Atheer Switch. |
-
-The library is designed around a **Zero-Trust Dynamic Key Derivation** architecture, meaning every transaction uses a unique derived key, eliminating the need for persistent plaintext secrets on the device.
+1. [نظرة عامة على المشروع](#نظرة-عامة-على-المشروع)
+2. [المعمارية التقنية](#المعمارية-التقنية)
+3. [المميزات](#المميزات)
+4. [المتطلبات المسبقة](#المتطلبات-المسبقة)
+5. [التثبيت](#التثبيت)
+6. [الصلاحيات المطلوبة](#الصلاحيات-المطلوبة)
+7. [البداية السريعة](#البداية-السريعة)
+8. [الاستخدام](#الاستخدام)
+   - [جهة الدافع — HCE (محاكاة البطاقة المضيفة)](#جهة-الدافع--hce-محاكاة-البطاقة-المضيفة)
+   - [جهة التاجر — قارئ NFC بتقنية SoftPOS](#جهة-التاجر--قارئ-nfc-بتقنية-softpos)
+   - [الدفع المباشر (أونلاين)](#الدفع-المباشر-أونلاين)
+   - [معالجة الأخطاء](#معالجة-الأخطاء)
+9. [تدفق عملية الدفع](#تدفق-عملية-الدفع)
+10. [نماذج البيانات](#نماذج-البيانات)
+11. [نموذج الأمان](#نموذج-الأمان)
+12. [هيكل المشروع](#هيكل-المشروع)
+13. [المساهمة](#المساهمة)
+14. [الترخيص](#الترخيص)
 
 ---
 
-## Architecture
+## نظرة عامة على المشروع
+
+**Atheer SDK** هي مكتبة Android مكتوبة بلغة Kotlin، توفر طبقة دفع متكاملة ومدعومة بالعتاد لتطبيقات Android المتكاملة مع **Atheer Switch Backend**. تتيح المكتبة وضعَين متكاملَين للدفع:
+
+| الوضع | الوصف |
+|-------|-------|
+| **HCE (الدافع)** | يحاكي جهاز الدافع بطاقة دفع لا تلامسية. تقوم المكتبة بتهيئة جلسة دفع موقعة تشفيريًا وإرسالها عبر النقر على NFC. |
+| **SoftPOS (التاجر)** | يعمل جهاز التاجر كنقطة استقبال NFC. تقرأ المكتبة البيانات الموقعة وتتحقق منها وترسلها إلى مقسّم أثير. |
+
+تعتمد المكتبة على معمارية **Zero-Trust Dynamic Key Derivation** (اشتقاق المفاتيح الديناميكي عديم الثقة)، بحيث تستخدم كل عملية مفتاحًا مشتقًا فريدًا، مما يلغي الحاجة إلى تخزين أسرار نصية ثابتة على الجهاز.
+
+---
+
+## المعمارية التقنية
 
 ```
 ┌────────────────────────────────────────────────────────┐
-│                      AtheerSdk (Facade)                │
+│                  AtheerSdk (الواجهة الرئيسية)           │
 │  init()  │  preparePayment()  │  charge()  │  parseNfc │
 └──────────┬─────────────────────────────────────────────┘
            │
     ┌──────┴────────────────────────────────────┐
     │                                           │
 ┌───▼──────────────┐              ┌─────────────▼───────┐
-│  Security Layer  │              │   Network Layer     │
+│  طبقة الأمان     │              │   طبقة الشبكة       │
 │                  │              │                     │
 │ AtheerKeystore   │              │ AtheerNetworkRouter │
 │  Manager         │              │ (OkHttp / TLS 1.3)  │
 │  ├─ Master Seed  │              └─────────────────────┘
 │  │  (TEE/AES256) │
-│  ├─ Monotonic    │              ┌─────────────────────┐
-│  │  Counter      │              │    Storage Layer    │
-│  └─ LUK Derivation│             │                     │
-│     (HMAC-SHA256)│              │  AtheerDatabase     │
+│  ├─ عداد رتيب   │              ┌─────────────────────┐
+│  │  (Counter)    │              │   طبقة التخزين      │
+│  └─ اشتقاق LUK  │              │                     │
+│    (HMAC-SHA256) │              │  AtheerDatabase     │
 │                  │              │  (Room + SQLCipher) │
 │ AtheerPayment    │              └─────────────────────┘
 │  Session (60s)   │
 └──────────────────┘
         │
 ┌───────┴───────────────────────────┐
-│           NFC Layer               │
+│           طبقة NFC                │
 │                                   │
-│  AtheerApduService (HCE / Payer)  │
-│  AtheerNfcReader   (SoftPOS /     │
-│                     Merchant)     │
+│  AtheerApduService (HCE / دافع)   │
+│  AtheerNfcReader  (SoftPOS /      │
+│                    تاجر)          │
 └───────────────────────────────────┘
 ```
 
-### Zero-Trust Dynamic Key Derivation
+### آلية اشتقاق المفاتيح الديناميكي (Zero-Trust)
 
-1. A **Master Seed** (AES-256) is generated once and stored inside the hardware-backed **Android Keystore** (TEE / StrongBox).
-2. A **Monotonic Counter** stored in `EncryptedSharedPreferences` increments atomically on every transaction.
-3. A **Limited-Use Key (LUK)** is derived per transaction: `LUK = HMAC-SHA256(MasterSeed, Counter)`.
-4. The transaction payload (`DeviceID | Counter | Timestamp`) is signed with the LUK before NFC transmission.
-5. The Backend verifies the signature and rejects any replayed counter value.
-
----
-
-## Features
-
-- ✅ **Host Card Emulation (HCE)** — device acts as a contactless payment card over NFC
-- ✅ **SoftPOS NFC Reader** — device reads payment data from another HCE device
-- ✅ **Zero-Trust Dynamic Key Derivation** — unique cryptographic key per transaction
-- ✅ **Hardware-backed Key Storage** — Master Seed secured in Android Keystore (TEE/StrongBox)
-- ✅ **Biometric Authentication** — BIOMETRIC_STRONG required before arming a payment session
-- ✅ **Monotonic Counter** — encrypted, tamper-resistant counter prevents replay attacks
-- ✅ **Relay Attack Protection** — NFC Round-Trip Time (RTT) measured; rejects responses > 50 ms
-- ✅ **Root Detection** — powered by [RootBeer](https://github.com/scottyab/rootbeer); throws `SecurityException` on rooted devices
-- ✅ **Google Play Integrity API** — asynchronous device integrity verification
-- ✅ **60-Second Session Window** — armed payment sessions auto-expire after 60 seconds
-- ✅ **Encrypted Local Storage** — Room + SQLCipher for transaction history
-- ✅ **TLS 1.2 / 1.3 enforcement** — secure HTTPS-only communication
-- ✅ **Structured Error Model** — sealed `AtheerError` class with typed error codes
-- ✅ **Kotlin Coroutines** — fully async, non-blocking API
+1. يتم توليد **Master Seed** (AES-256) مرة واحدة وتخزينه داخل **Android Keystore** المدعوم بالعتاد (TEE / StrongBox).
+2. يتم تخزين **عداد رتيب (Monotonic Counter)** في `EncryptedSharedPreferences` ويُزاد تلقائيًا مع كل عملية.
+3. يتم اشتقاق **مفتاح محدود الاستخدام (LUK)** لكل عملية: `LUK = HMAC-SHA256(MasterSeed, Counter)`.
+4. يتم توقيع حمولة العملية (`DeviceID | Counter | Timestamp`) باستخدام LUK قبل الإرسال عبر NFC.
+5. يتحقق الـ Backend من التوقيع ويرفض أي قيمة عداد مكررة سبق استخدامها.
 
 ---
 
-## Prerequisites
+## المميزات
 
-| Requirement | Detail |
-|-------------|--------|
-| **Android API** | Minimum API level **24** (Android 7.0 Nougat) |
-| **Compile SDK** | API level **34** (Android 14) |
-| **Kotlin** | 1.9.23 or higher |
-| **NFC hardware** | Device must have an NFC chip |
-| **HCE support** | Required on payer devices (`android.hardware.nfc.hce`) |
-| **Biometric hardware** | Fingerprint sensor or equivalent (BIOMETRIC_STRONG) |
-| **Google Play Services** | Required for Play Integrity API |
-| **Build tool** | Gradle 8.x with KSP plugin |
+- ✅ **محاكاة البطاقة المضيفة (HCE)** — يتصرف الجهاز كبطاقة دفع لا تلامسية عبر NFC
+- ✅ **قارئ SoftPOS NFC** — يقرأ الجهاز بيانات الدفع من جهاز HCE آخر
+- ✅ **اشتقاق مفاتيح ديناميكي بلا ثقة (Zero-Trust)** — مفتاح تشفيري فريد لكل عملية
+- ✅ **تخزين المفاتيح بالعتاد** — Master Seed محمي في Android Keystore (TEE/StrongBox)
+- ✅ **التحقق البيومتري** — BIOMETRIC_STRONG مطلوب قبل تهيئة كل جلسة دفع
+- ✅ **العداد الرتيب** — يمنع هجمات إعادة الإرسال (Replay Attacks)
+- ✅ **الحماية من هجمات الترحيل** — قياس RTT عبر NFC ورفض الاستجابات التي تتجاوز 50 مللي ثانية
+- ✅ **كشف الـ Root** — مدعوم بـ [RootBeer](https://github.com/scottyab/rootbeer)؛ يطرح `SecurityException` على الأجهزة المروتة
+- ✅ **Google Play Integrity API** — التحقق غير المتزامن من نزاهة الجهاز
+- ✅ **نافذة جلسة 60 ثانية** — تنتهي جلسات الدفع المهيأة تلقائيًا بعد 60 ثانية
+- ✅ **تخزين محلي مشفر** — Room + SQLCipher لسجل المعاملات
+- ✅ **إلزام TLS 1.2 / 1.3** — اتصال HTTPS آمن فقط
+- ✅ **نموذج أخطاء هيكلي** — `AtheerError` كـ Sealed Class مع أكواد أخطاء محددة
+- ✅ **Kotlin Coroutines** — واجهة برمجية غير متزامنة بالكامل
 
 ---
 
-## Installation
+## المتطلبات المسبقة
 
-The SDK is published to **GitHub Packages**. Add the following to your project's Gradle files:
+| المتطلب | التفاصيل |
+|---------|---------|
+| **Android API** | الحد الأدنى API مستوى **24** (Android 7.0 Nougat) |
+| **Compile SDK** | API مستوى **34** (Android 14) |
+| **Kotlin** | الإصدار 1.9.23 أو أحدث |
+| **عتاد NFC** | يجب أن يحتوي الجهاز على شريحة NFC |
+| **دعم HCE** | مطلوب على أجهزة الدافع (`android.hardware.nfc.hce`) |
+| **عتاد البيومترية** | مستشعر بصمة أو ما يعادله (BIOMETRIC_STRONG) |
+| **Google Play Services** | مطلوب لاستخدام Play Integrity API |
+| **أداة البناء** | Gradle 8.x مع إضافة KSP |
 
-### 1. Configure the repository
+---
 
-In your root `settings.gradle.kts` (or `build.gradle.kts`):
+## التثبيت
+
+يتم نشر المكتبة على **GitHub Packages**. أضف ما يلي إلى ملفات Gradle في مشروعك:
+
+### 1. إعداد المستودع
+
+في ملف `settings.gradle.kts` الجذري (أو `build.gradle.kts`):
 
 ```kotlin
 dependencyResolutionManagement {
@@ -153,19 +153,19 @@ dependencyResolutionManagement {
 }
 ```
 
-> **Note:** GitHub Packages requires authentication. Create a [Personal Access Token](https://github.com/settings/tokens) with `read:packages` scope.
+> **ملاحظة:** يتطلب GitHub Packages المصادقة. أنشئ [Personal Access Token](https://github.com/settings/tokens) بصلاحية `read:packages`.
 >
-> Store credentials in your **user-level** `~/.gradle/gradle.properties` (shared across all Gradle projects, never committed):
+> خزّن بيانات الاعتماد في ملف `~/.gradle/gradle.properties` على مستوى المستخدم (مشترك بين جميع مشاريع Gradle، لا يُرفع إلى المستودع):
 > ```
 > gpr.user=YOUR_GITHUB_USERNAME
 > gpr.key=YOUR_PERSONAL_ACCESS_TOKEN
 > ```
 >
-> Alternatively, add a project-local `gradle.properties` file and ensure it is listed in `.gitignore` so credentials are never committed to version control.
+> بديلًا، يمكن إضافة ملف `gradle.properties` محلي للمشروع مع التأكد من إضافته إلى `.gitignore` لمنع رفع بيانات الاعتماد عن طريق الخطأ.
 
-### 2. Add the dependency
+### 2. إضافة الاعتمادية
 
-In your app module's `build.gradle.kts`:
+في ملف `build.gradle.kts` لوحدة التطبيق:
 
 ```kotlin
 dependencies {
@@ -173,37 +173,37 @@ dependencies {
 }
 ```
 
-Replace `1.0.0` with the [latest released version](https://github.com/ahmedaliahmed775/atheer-sdk/packages).
+استبدل `1.0.0` بـ [أحدث إصدار منشور](https://github.com/ahmedaliahmed775/atheer-sdk/packages).
 
 ---
 
-## Required Permissions
+## الصلاحيات المطلوبة
 
-The SDK declares the following permissions in its manifest (automatically merged into your app):
+تُعلن المكتبة عن الصلاحيات التالية في ملف الـ manifest (يتم دمجها تلقائيًا في تطبيقك):
 
 ```xml
-<!-- NFC communication -->
+<!-- التواصل عبر NFC -->
 <uses-permission android:name="android.permission.NFC" />
 <uses-feature android:name="android.hardware.nfc.hce" android:required="true" />
 
-<!-- Network access -->
+<!-- الوصول للشبكة -->
 <uses-permission android:name="android.permission.INTERNET" />
 <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
-<!-- Biometrics -->
+<!-- البيومترية -->
 <uses-permission android:name="android.permission.BIOMETRIC" />
 
-<!-- Haptic feedback -->
+<!-- التغذية الراجعة الاهتزازية -->
 <uses-permission android:name="android.permission.VIBRATE" />
 ```
 
 ---
 
-## Quick Start
+## البداية السريعة
 
-### 1. Initialize the SDK
+### 1. تهيئة المكتبة
 
-Call `AtheerSdk.init()` once in your `Application.onCreate()`:
+استدعِ `AtheerSdk.init()` مرة واحدة في `Application.onCreate()`:
 
 ```kotlin
 class MyApp : Application() {
@@ -212,40 +212,40 @@ class MyApp : Application() {
 
         try {
             AtheerSdk.init(
-                context     = this,
-                merchantId  = "YOUR_MERCHANT_ID",
-                apiKey      = "YOUR_API_KEY",
-                isSandbox   = false          // set true for testing
+                context    = this,
+                merchantId = "YOUR_MERCHANT_ID",
+                apiKey     = "YOUR_API_KEY",
+                isSandbox  = false   // اضبطها على true للاختبار
             )
         } catch (e: SecurityException) {
-            // Thrown if root is detected or device integrity check fails
-            Log.e("App", "Insecure device: ${e.message}")
+            // يُطرح إذا تم اكتشاف Root أو فشل التحقق من نزاهة الجهاز
+            Log.e("App", "جهاز غير آمن: ${e.message}")
         }
     }
 }
 ```
 
-> ⚠️ `init()` performs a **root check** synchronously and fires a **Play Integrity** request asynchronously. On rooted devices a `SecurityException` is thrown immediately.
+> ⚠️ تُجري `init()` **فحص الـ Root** بشكل متزامن وتُطلق طلب **Play Integrity** بشكل غير متزامن. على الأجهزة المروتة يُطرح `SecurityException` فورًا.
 
 ---
 
-## Usage
+## الاستخدام
 
-### Payer Side — HCE (Host Card Emulation)
+### جهة الدافع — HCE (محاكاة البطاقة المضيفة)
 
-The payer taps their phone to the merchant terminal. The SDK:
-1. Prompts biometric authentication.
-2. Derives a one-time LUK and signs the payload.
-3. Arms a 60-second session for `AtheerApduService` to serve over NFC.
+يقرّب الدافع هاتفه من جهاز التاجر. تقوم المكتبة بما يلي:
+1. طلب التحقق البيومتري من المستخدم.
+2. اشتقاق LUK للاستخدام مرة واحدة وتوقيع الحمولة.
+3. تهيئة جلسة مدتها 60 ثانية لتقديم بيانات الدفع عبر `AtheerApduService`.
 
 ```kotlin
-// Called from a FragmentActivity when the user initiates a payment
+// يُستدعى من FragmentActivity عند بدء المستخدم لعملية الدفع
 AtheerSdk.getInstance().preparePayment(
-    activity  = this,
-    deviceId  = Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID),
+    activity = this,
+    deviceId = Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID),
     onSuccess = {
-        // Session is now armed — prompt user to tap their device to the terminal
-        showMessage("Hold your phone near the terminal to complete payment.")
+        // الجلسة مهيأة الآن — اطلب من المستخدم تقريب جهازه من الجهاز الطرفي
+        showMessage("قرّب هاتفك من الجهاز لإتمام الدفع.")
     },
     onError = { errorMessage ->
         showError(errorMessage)
@@ -253,38 +253,38 @@ AtheerSdk.getInstance().preparePayment(
 )
 ```
 
-The `AtheerApduService` HCE service is registered automatically via the library's manifest entry. No additional setup is required.
+يتم تسجيل خدمة `AtheerApduService` تلقائيًا عبر إدخال manifest في المكتبة. لا توجد أي إعدادات إضافية مطلوبة.
 
 ---
 
-### Merchant Side — SoftPOS NFC Reader
+### جهة التاجر — قارئ NFC بتقنية SoftPOS
 
-The merchant's app reads the payer's NFC data and submits the charge:
+يقرأ تطبيق التاجر بيانات NFC الخاصة بالدافع ويرسل طلب الدفع:
 
 ```kotlin
-// 1. Build the NFC reader
+// 1. إنشاء قارئ NFC
 val nfcReader = AtheerNfcReader(
-    context          = this,
-    merchantId       = "MERCHANT_001",
-    receiverAccount  = "00967700000001",   // merchant wallet / POS account
-    amount           = 1500L,              // amount in smallest currency unit
-    currency         = "YER",
-    transactionType  = "P2M",
+    context             = this,
+    merchantId          = "MERCHANT_001",
+    receiverAccount     = "00967700000001",  // محفظة التاجر أو حساب POS
+    amount              = 1500L,             // المبلغ بأصغر وحدة للعملة
+    currency            = "YER",
+    transactionType     = "P2M",
     transactionCallback = { chargeRequest ->
-        // NFC data received — submit to the Atheer Switch
+        // تم استلام بيانات NFC — أرسل إلى مقسّم أثير
         submitCharge(chargeRequest)
     },
     errorCallback = { exception ->
         when (exception) {
             is AtheerNfcReader.RelayAttackException ->
-                showError("Relay attack detected. Please try again face-to-face.")
+                showError("تم اكتشاف هجوم ترحيل. يرجى إعادة المحاولة وجهًا لوجه.")
             else ->
-                showError("NFC error: ${exception.message}")
+                showError("خطأ NFC: ${exception.message}")
         }
     }
 )
 
-// 2. Enable NFC reader mode in onResume
+// 2. تفعيل وضع القراءة في onResume
 override fun onResume() {
     super.onResume()
     NfcAdapter.getDefaultAdapter(this)?.enableReaderMode(
@@ -295,18 +295,18 @@ override fun onResume() {
     )
 }
 
-// 3. Disable in onPause
+// 3. تعطيل القراءة في onPause
 override fun onPause() {
     super.onPause()
     NfcAdapter.getDefaultAdapter(this)?.disableReaderMode(this)
 }
 
-// 4. Submit the charge
+// 4. إرسال طلب الدفع
 private fun submitCharge(request: ChargeRequest) {
     lifecycleScope.launch {
         val result = AtheerSdk.getInstance().charge(request, accessToken = "BEARER_TOKEN")
         result.fold(
-            onSuccess = { response -> showSuccess("Transaction ID: ${response.transactionId}") },
+            onSuccess = { response -> showSuccess("رقم العملية: ${response.transactionId}") },
             onFailure = { error -> handleAtheerError(error) }
         )
     }
@@ -315,24 +315,24 @@ private fun submitCharge(request: ChargeRequest) {
 
 ---
 
-### Direct Charge (Online)
+### الدفع المباشر (أونلاين)
 
-For in-app payments that do not go through NFC, derive the signature using the SDK's key manager:
+للمدفوعات داخل التطبيق التي لا تمر عبر NFC، اشتق التوقيع باستخدام مدير المفاتيح في المكتبة:
 
 ```kotlin
 val keystoreManager = AtheerSdk.getInstance().getKeystoreManager()
 
-// 1. Increment counter and derive a one-time LUK
+// 1. زيادة العداد واشتقاق LUK للاستخدام مرة واحدة
 val counter   = keystoreManager.incrementAndGetCounter()
 val luk       = keystoreManager.deriveLUK(counter)
 val timestamp = SystemClock.elapsedRealtime()
 val deviceId  = Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID)
 
-// 2. Build and sign the payload: DeviceID|Counter|Timestamp
+// 2. بناء الحمولة وتوقيعها: DeviceID|Counter|Timestamp
 val payload   = "$deviceId|$counter|$timestamp"
 val signature = keystoreManager.signWithLUK(payload, luk)
 
-// 3. Construct the request
+// 3. بناء طلب الدفع
 val request = ChargeRequest(
     amount          = 5000L,
     currency        = "YER",
@@ -345,13 +345,13 @@ val request = ChargeRequest(
     timestamp       = timestamp,
     authMethod      = "BIOMETRIC_CRYPTOGRAM",
     signature       = signature,
-    description     = "Order #12345"
+    description     = "طلب رقم 12345"
 )
 
 lifecycleScope.launch {
     val result = AtheerSdk.getInstance().charge(request, accessToken = "BEARER_TOKEN")
     result.onSuccess { response ->
-        Log.i("Payment", "Success — Transaction ID: ${response.transactionId}")
+        Log.i("Payment", "نجاح — رقم العملية: ${response.transactionId}")
     }.onFailure { error ->
         handleAtheerError(error)
     }
@@ -360,180 +360,180 @@ lifecycleScope.launch {
 
 ---
 
-### Error Handling
+### معالجة الأخطاء
 
-The SDK uses a typed sealed class for all errors:
+تستخدم المكتبة Sealed Class مكتوبة بأنواع محددة لجميع الأخطاء:
 
 ```kotlin
 fun handleAtheerError(error: Throwable) {
     when (error) {
-        is AtheerError.InsufficientFunds     -> showError("Insufficient balance.")
-        is AtheerError.AuthenticationFailed  -> showError("Authentication failed. Check your API key.")
-        is AtheerError.InvalidVoucher        -> showError("Invalid or expired token.")
-        is AtheerError.ProviderTimeout       -> showError("Switch server timed out. Try again.")
-        is AtheerError.NetworkError          -> showError("No internet connection.")
-        is AtheerError.UnknownError          -> showError("An unexpected error occurred.")
-        else                                 -> showError(error.message ?: "Unknown error")
+        is AtheerError.InsufficientFunds    -> showError("رصيد غير كافٍ.")
+        is AtheerError.AuthenticationFailed -> showError("فشل التحقق. تحقق من مفتاح API.")
+        is AtheerError.InvalidVoucher       -> showError("رمز غير صالح أو منتهي الصلاحية.")
+        is AtheerError.ProviderTimeout      -> showError("انتهت مهلة سيرفر المقسّم. أعد المحاولة.")
+        is AtheerError.NetworkError         -> showError("لا يوجد اتصال بالإنترنت.")
+        is AtheerError.UnknownError         -> showError("حدث خطأ غير متوقع.")
+        else                                -> showError(error.message ?: "خطأ غير معروف")
     }
 }
 ```
 
-| Error Class | Error Code | Trigger |
-|-------------|-----------|---------|
-| `InsufficientFunds` | `ERR_FUNDS` | HTTP 400 with `REJECTED` status |
-| `InvalidVoucher` | `ERR_VOUCHER` | HTTP 400 / `EXPIRED` status |
+| كلاس الخطأ | كود الخطأ | سبب الخطأ |
+|-----------|----------|----------|
+| `InsufficientFunds` | `ERR_FUNDS` | HTTP 400 مع حالة `REJECTED` |
+| `InvalidVoucher` | `ERR_VOUCHER` | HTTP 400 / حالة `EXPIRED` |
 | `AuthenticationFailed` | `ERR_AUTH` | HTTP 401 / 403 |
 | `ProviderTimeout` | `ERR_TIMEOUT` | HTTP 504 |
-| `NetworkError` | `ERR_NETWORK` | IO exception / no connectivity |
-| `UnknownError` | `ERR_UNKNOWN` | Any other server error |
+| `NetworkError` | `ERR_NETWORK` | استثناء IO / لا يوجد اتصال |
+| `UnknownError` | `ERR_UNKNOWN` | أي خطأ آخر من السيرفر |
 
 ---
 
-## Payment Flow
+## تدفق عملية الدفع
 
-### HCE Tap-to-Pay Flow
+### تدفق الدفع عبر النقر بتقنية HCE
 
 ```
-  Payer Device                           Merchant Device (SoftPOS)
+  جهاز الدافع                             جهاز التاجر (SoftPOS)
        │                                          │
-       │  1. User initiates payment               │
-       │  2. Biometric authentication             │
-       │  3. Counter++ → Derive LUK               │
-       │  4. Sign payload: DeviceID|Counter|TS    │
-       │  5. Arm 60-second session                │
+       │  1. المستخدم يبدأ عملية الدفع            │
+       │  2. التحقق البيومتري                      │
+       │  3. Counter++ ← اشتقاق LUK               │
+       │  4. توقيع الحمولة: DeviceID|Counter|TS   │
+       │  5. تهيئة جلسة مدتها 60 ثانية            │
        │                                          │
-       │   ──────── NFC TAP ──────────────────>   │
+       │   ────────── نقرة NFC ────────────────>  │
        │   SELECT AID (A000000003101001)           │
-       │   <───────────────────────────────────   │
+       │   <────────────────────────────────────  │
        │   GET_PAYMENT_DATA (0x00CA)               │
-       │   ────── Signed Payload ──────────────>  │
+       │   ─────── الحمولة الموقعة ─────────────> │
        │                                          │
-       │   (RTT measured < 50 ms enforced)        │
+       │   (RTT يجب أن يكون أقل من 50 مللي ثانية) │
        │                                          │
-       │                                   6. Parse payload
-       │                                   7. Build ChargeRequest
+       │                                   6. تحليل الحمولة
+       │                                   7. بناء ChargeRequest
        │                                   8. POST /api/v1/payments/process
        │                                          │
-       │                                   9. Backend verifies signature
-       │                                      & monotonic counter
-       │                                  10. Transaction processed
+       │                                   9. Backend يتحقق من التوقيع
+       │                                      والعداد الرتيب
+       │                                  10. اكتمال المعاملة
 ```
 
 ---
 
-## Data Models
+## نماذج البيانات
 
 ### `ChargeRequest`
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `amount` | `Long` | Amount in the smallest currency unit |
-| `currency` | `String` | Currency code (default: `"YER"`) |
-| `merchantId` | `String` | Merchant identifier |
-| `receiverAccount` | `String` | Merchant wallet or POS account number |
-| `transactionRef` | `String` | Unique transaction reference (UUID) |
-| `transactionType` | `String` | `"P2M"` (Person-to-Merchant) or `"P2P"` |
-| `deviceId` | `String` | Sender device identifier |
-| `counter` | `Long` | Monotonic counter value |
-| `timestamp` | `Long` | `SystemClock.elapsedRealtime()` value |
-| `authMethod` | `String` | Default: `"BIOMETRIC_CRYPTOGRAM"` |
-| `signature` | `String` | Base64-encoded HMAC-SHA256 signature |
-| `description` | `String?` | Optional transaction description |
+| الحقل | النوع | الوصف |
+|-------|------|-------|
+| `amount` | `Long` | المبلغ بأصغر وحدة للعملة |
+| `currency` | `String` | رمز العملة (الافتراضي: `"YER"`) |
+| `merchantId` | `String` | معرف التاجر |
+| `receiverAccount` | `String` | محفظة التاجر أو رقم حساب POS |
+| `transactionRef` | `String` | مرجع فريد للعملية (UUID) |
+| `transactionType` | `String` | `"P2M"` (شخص لتاجر) أو `"P2P"` (شخص لشخص) |
+| `deviceId` | `String` | معرف جهاز المرسل |
+| `counter` | `Long` | قيمة العداد الرتيب |
+| `timestamp` | `Long` | قيمة `SystemClock.elapsedRealtime()` |
+| `authMethod` | `String` | الافتراضي: `"BIOMETRIC_CRYPTOGRAM"` |
+| `signature` | `String` | توقيع HMAC-SHA256 مشفر بـ Base64 |
+| `description` | `String?` | وصف اختياري للعملية |
 
 ### `ChargeResponse`
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `transactionId` | `String` | Unique transaction ID from the Switch |
-| `status` | `String` | Transaction status (e.g., `"ACCEPTED"`) |
-| `message` | `String` | Human-readable result message |
+| الحقل | النوع | الوصف |
+|-------|------|-------|
+| `transactionId` | `String` | معرف فريد للعملية من المقسّم |
+| `status` | `String` | حالة العملية (مثال: `"ACCEPTED"`) |
+| `message` | `String` | رسالة نتيجة مقروءة |
 
 ### `AtheerTransaction`
 
-Represents a full transaction object used in `processTransaction()`:
+يمثل كائن معاملة كامل يُستخدم في `processTransaction()`:
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `amount` | `Double` | Transaction amount |
-| `currency` | `String` | Currency code |
-| `receiverAccount` | `String` | Recipient account |
-| `transactionType` | `String` | Transaction type |
-| `deviceId` | `String` | Sender device ID |
-| `counter` | `Long` | Monotonic counter |
-| `timestamp` | `Long` | Transaction timestamp |
-| `authMethod` | `String` | Authentication method |
-| `signature` | `String` | Digital signature |
+| الحقل | النوع | الوصف |
+|-------|------|-------|
+| `amount` | `Double` | مبلغ العملية |
+| `currency` | `String` | رمز العملة |
+| `receiverAccount` | `String` | حساب المستلم |
+| `transactionType` | `String` | نوع العملية |
+| `deviceId` | `String` | معرف جهاز المرسل |
+| `counter` | `Long` | العداد الرتيب |
+| `timestamp` | `Long` | الطابع الزمني للعملية |
+| `authMethod` | `String` | وسيلة التحقق |
+| `signature` | `String` | التوقيع الرقمي |
 
 ### `AtheerError`
 
-Sealed class — see [Error Handling](#error-handling) section above.
+Sealed Class — راجع قسم [معالجة الأخطاء](#معالجة-الأخطاء) أعلاه.
 
 ---
 
-## Security Model
+## نموذج الأمان
 
-Atheer SDK is built on a multi-layered defense strategy:
+تعتمد Atheer SDK على استراتيجية دفاع متعددة الطبقات:
 
-| Layer | Mechanism |
-|-------|-----------|
-| **Device Integrity** | Root detection via RootBeer; rejects rooted devices at init |
-| **Platform Attestation** | Google Play Integrity API validates device and app authenticity |
-| **Key Storage** | Master Seed (AES-256) stored in Android Keystore, optionally in StrongBox TEE |
-| **Key Derivation** | `LUK = HMAC-SHA256(MasterSeed, Counter)` — unique key per transaction |
-| **Replay Prevention** | Monotonic counter stored in `EncryptedSharedPreferences`; backend rejects repeated counter values |
-| **Biometric Gate** | `BIOMETRIC_STRONG` authentication required before each payment session |
-| **Session Expiry** | Armed payment sessions expire after **60 seconds** |
-| **Relay Attack Prevention** | NFC RTT enforced < 50 ms; sessions are cancelled if exceeded |
-| **Transport Security** | TLS 1.2 / 1.3 enforced via `ConnectionSpec.MODERN_TLS` |
-| **Payload Integrity** | Every NFC payload is digitally signed: `DeviceID | Counter | Timestamp | Signature` |
+| الطبقة | الآلية |
+|-------|-------|
+| **نزاهة الجهاز** | كشف الـ Root عبر RootBeer؛ رفض الأجهزة المروتة عند التهيئة |
+| **تصديق المنصة** | Google Play Integrity API للتحقق من صحة الجهاز والتطبيق |
+| **تخزين المفاتيح** | Master Seed (AES-256) محفوظ في Android Keystore، اختياريًا في StrongBox TEE |
+| **اشتقاق المفاتيح** | `LUK = HMAC-SHA256(MasterSeed, Counter)` — مفتاح فريد لكل عملية |
+| **منع الإعادة** | عداد رتيب في `EncryptedSharedPreferences`؛ يرفض الـ Backend قيم العداد المكررة |
+| **بوابة البيومترية** | مصادقة `BIOMETRIC_STRONG` مطلوبة قبل كل جلسة دفع |
+| **انتهاء الجلسة** | جلسات الدفع المهيأة تنتهي تلقائيًا بعد **60 ثانية** |
+| **منع هجمات الترحيل** | RTT عبر NFC يُفرض أقل من 50 مللي ثانية؛ الجلسات تُلغى عند تجاوز الحد |
+| **أمان النقل** | TLS 1.2 / 1.3 مُفرض عبر `ConnectionSpec.MODERN_TLS` |
+| **سلامة الحمولة** | كل حمولة NFC موقعة رقميًا: `DeviceID | Counter | Timestamp | Signature` |
 
 ---
 
-## Project Structure
+## هيكل المشروع
 
 ```
 atheer-sdk/
 ├── atheer-sdk/
-│   ├── build.gradle.kts           # Module build config & publishing setup
-│   ├── consumer-rules.pro         # ProGuard rules for consumers
-│   ├── proguard-rules.pro         # ProGuard rules for the library
+│   ├── build.gradle.kts           # إعدادات بناء الوحدة والنشر
+│   ├── consumer-rules.pro         # قواعد ProGuard للمستهلكين
+│   ├── proguard-rules.pro         # قواعد ProGuard للمكتبة
 │   └── src/main/
-│       ├── AndroidManifest.xml    # Permissions, HCE service, settings activity
+│       ├── AndroidManifest.xml    # الصلاحيات، خدمة HCE، نشاط الإعدادات
 │       ├── java/com/atheer/sdk/
-│       │   ├── AtheerSdk.kt                          # Main SDK facade (init, charge, preparePayment)
-│       │   ├── AtheerPaymentSettingsActivity.kt      # HCE payment settings screen
+│       │   ├── AtheerSdk.kt                          # واجهة المكتبة الرئيسية (init, charge, preparePayment)
+│       │   ├── AtheerPaymentSettingsActivity.kt      # شاشة إعدادات دفع HCE
 │       │   ├── database/
-│       │   │   ├── AtheerDatabase.kt                 # Room + SQLCipher database
-│       │   │   ├── TransactionDao.kt                 # DAO for transaction queries
-│       │   │   └── TransactionEntity.kt              # Local transaction entity
+│       │   │   ├── AtheerDatabase.kt                 # قاعدة البيانات (Room + SQLCipher)
+│       │   │   ├── TransactionDao.kt                 # استعلامات المعاملات
+│       │   │   └── TransactionEntity.kt              # كيان المعاملة المحلية
 │       │   ├── hce/
-│       │   │   └── AtheerApduService.kt              # HostApduService (HCE card emulation)
+│       │   │   └── AtheerApduService.kt              # خدمة HostApduService (محاكاة البطاقة)
 │       │   ├── model/
-│       │   │   ├── AtheerError.kt                    # Typed error sealed class
-│       │   │   ├── AtheerTransaction.kt              # Full transaction model
-│       │   │   ├── BalanceResponse.kt                # Balance query response
-│       │   │   ├── ChargeRequest.kt                  # Charge/payment request model
-│       │   │   ├── ChargeResponse.kt                 # Charge/payment response model
-│       │   │   ├── HistoryResponse.kt                # Transaction history response
+│       │   │   ├── AtheerError.kt                    # Sealed Class للأخطاء المكتوبة
+│       │   │   ├── AtheerTransaction.kt              # نموذج المعاملة الكامل
+│       │   │   ├── BalanceResponse.kt                # استجابة استعلام الرصيد
+│       │   │   ├── ChargeRequest.kt                  # نموذج طلب الدفع
+│       │   │   ├── ChargeResponse.kt                 # نموذج استجابة الدفع
+│       │   │   ├── HistoryResponse.kt                # استجابة سجل المعاملات
 │       │   │   ├── LoginRequest.kt / LoginResponse.kt
 │       │   │   ├── SignupRequest.kt / SignupResponse.kt
 │       │   ├── network/
-│       │   │   ├── AtheerNetworkRouter.kt            # OkHttp-based network client
-│       │   │   ├── AtheerCellularRouter.kt           # Cellular/APN fallback router
-│       │   │   └── AtheerSyncWorker.kt               # Background sync worker (⚠️ deprecated in v1.2.0 — no-op)
+│       │   │   ├── AtheerNetworkRouter.kt            # عميل شبكة مبني على OkHttp
+│       │   │   ├── AtheerCellularRouter.kt           # موجه الشبكة الخلوية البديل
+│       │   │   └── AtheerSyncWorker.kt               # عامل المزامنة (⚠️ متوقف منذ v1.2.0 — لا يؤدي عملًا)
 │       │   ├── nfc/
-│       │   │   ├── AtheerNfcReader.kt                # IsoDep NFC reader (SoftPOS / merchant)
-│       │   │   └── AtheerFeedbackUtils.kt            # Haptic & audio feedback helpers
+│       │   │   ├── AtheerNfcReader.kt                # قارئ IsoDep NFC (SoftPOS / تاجر)
+│       │   │   └── AtheerFeedbackUtils.kt            # مساعدات التغذية الراجعة الحسية والصوتية
 │       │   └── security/
-│       │       ├── AtheerKeystoreManager.kt          # Key generation, LUK derivation, counter
-│       │       └── AtheerPaymentSession.kt           # Time-limited armed payment session
+│       │       ├── AtheerKeystoreManager.kt          # توليد المفاتيح، اشتقاق LUK، العداد
+│       │       └── AtheerPaymentSession.kt           # جلسة الدفع المهيأة محدودة الوقت
 │       └── res/
 │           ├── values/strings.xml
 │           └── xml/
-│               ├── apduservice.xml                   # HCE AID registration
+│               ├── apduservice.xml                   # تسجيل AID لـ HCE
 │               └── network_security_config.xml
-├── build.gradle.kts               # Root build config
-├── settings.gradle.kts            # Project/module settings
+├── build.gradle.kts               # إعدادات البناء الجذرية
+├── settings.gradle.kts            # إعدادات المشروع والوحدات
 ├── gradle.properties
 ├── LICENSE.txt
 └── NOTICE.txt
@@ -541,25 +541,25 @@ atheer-sdk/
 
 ---
 
-## Contributing
+## المساهمة
 
-Contributions are welcome! To extend or improve the SDK:
+نرحب بمساهماتكم! لتوسيع المكتبة أو تحسينها:
 
-1. **Fork** the repository and create a feature branch.
-2. Follow the existing Kotlin code style (`kotlin.code.style=official`).
-3. Write or update tests under `src/test/`.
-4. Ensure the build passes: `./gradlew :atheer-sdk:build`
-5. Open a Pull Request with a clear description of the change.
+1. **Fork** المستودع وأنشئ فرعًا لميزتك.
+2. اتبع أسلوب Kotlin الموجود في الكود (`kotlin.code.style=official`).
+3. اكتب أو حدّث الاختبارات في مجلد `src/test/`.
+4. تأكد من نجاح البناء: `./gradlew :atheer-sdk:build`
+5. افتح Pull Request مع وصف واضح للتغيير.
 
-**Areas open for contribution:**
+**مجالات مفتوحة للمساهمة:**
 
-- Additional network router backends (e.g., cellular APN)
-- Extended transaction types beyond P2M and P2P
-- Enhanced device attestation strategies
-- Expanded error model and localization
+- إضافة موجهات شبكة إضافية (مثل APN الخلوي)
+- دعم أنواع عمليات إضافية تتجاوز P2M و P2P
+- تحسين استراتيجيات تصديق الجهاز
+- توسيع نموذج الأخطاء والتعريب
 
 ---
 
-## License
+## الترخيص
 
-See [`LICENSE.txt`](LICENSE.txt) and [`NOTICE.txt`](NOTICE.txt) in the repository root for full license details.
+راجع ملفَي [`LICENSE.txt`](LICENSE.txt) و [`NOTICE.txt`](NOTICE.txt) في جذر المستودع للاطلاع على التفاصيل الكاملة للترخيص.
