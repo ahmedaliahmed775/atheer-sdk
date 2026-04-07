@@ -17,11 +17,10 @@ import java.nio.charset.StandardCharsets
 /**
  * ## AtheerApduService
  * خدمة محاكاة البطاقة المضيفة (HCE) التي تسمح للجهاز بالعمل كبطاقة دفع لا تلامسية.
- * 
- * التحديث: يدعم جلب التوكنات المرتبطة برقم الهاتف وتنبيه المستخدم بإرسال البيانات.
+ * * التحديث: يتوافق مع معمارية Zero-Trust بحيث يتم إرسال البيانات الموقعة رقمياً
+ * مباشرة دون الحاجة لتشفير إضافي غير ضروري.
  */
 class AtheerApduService : HostApduService() {
-
 
     private val keystoreManager by lazy { AtheerKeystoreManager(applicationContext) }
 
@@ -80,11 +79,9 @@ class AtheerApduService : HostApduService() {
             // إظهار إشعار محلي للمستخدم
             showPaymentSentNotification()
             
-            // تشفير البيانات وإرسالها
+            // دمج البيانات الموقعة رقمياً وإرسالها (تمت إزالة التشفير القديم)
             val rawPayload = "$finalPayload|$finalSignature"
-            val encryptedPayload = keystoreManager.encrypt(rawPayload)
-            
-            val response = encryptedPayload.toByteArray(StandardCharsets.UTF_8) + APDU_OK
+            val response = rawPayload.toByteArray(StandardCharsets.UTF_8) + APDU_OK
             
             AtheerPaymentSession.clearSession()
             Log.i(TAG, "تم إرسال بيانات الدفع بنجاح عبر NFC")
