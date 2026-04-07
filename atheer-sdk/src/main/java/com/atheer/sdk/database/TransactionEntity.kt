@@ -33,8 +33,11 @@ data class TransactionEntity(
     @ColumnInfo(name = "timestamp")
     val timestamp: Long,
 
-    @ColumnInfo(name = "atheer_token")
-    val atheerToken: String,
+    @ColumnInfo(name = "device_id")
+    val deviceId: String,
+
+    @ColumnInfo(name = "counter")
+    val counter: Long,
 
     @ColumnInfo(name = "auth_method")
     val authMethod: String,

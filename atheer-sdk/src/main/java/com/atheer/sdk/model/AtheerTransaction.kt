@@ -11,7 +11,8 @@ data class AtheerTransaction(
     val receiverAccount: String,
     val transactionType: String,
     val timestamp: Long = System.currentTimeMillis(),
-    val atheerToken: String,
+    val deviceId: String,
+    val counter: Long,
     val authMethod: String = "BIOMETRIC_CRYPTOGRAM",
     val signature: String
 )
