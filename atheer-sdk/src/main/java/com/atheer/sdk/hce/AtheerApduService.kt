@@ -63,17 +63,17 @@ class AtheerApduService : HostApduService() {
      * معالجة طلب بيانات الدفع وتنبيه العميل.
      */
     private fun handleGetPaymentData(): ByteArray {
-        val sessionToken = AtheerPaymentSession.getTokenId()
+        val sessionPayload = AtheerPaymentSession.getPayload()
         val sessionSignature = AtheerPaymentSession.getSignature()
 
-        val (finalTokenId, finalSignature) = if (sessionToken != null && sessionSignature != null) {
-            sessionToken to sessionSignature
+        val (finalPayload, finalSignature) = if (sessionPayload != null && sessionSignature != null) {
+            sessionPayload to sessionSignature
         } else {
             Log.e(TAG, "لا توجد جلسة دفع نشطة!")
             null to null
         }
 
-        return if (finalTokenId != null) {
+        return if (finalPayload != null) {
             // التغذية الراجعة والاهتزاز
             AtheerFeedbackUtils.playSuccessFeedback(applicationContext)
             
@@ -81,7 +81,7 @@ class AtheerApduService : HostApduService() {
             showPaymentSentNotification()
             
             // تشفير البيانات وإرسالها
-            val rawPayload = "$finalTokenId|$finalSignature"
+            val rawPayload = "$finalPayload|$finalSignature"
             val encryptedPayload = keystoreManager.encrypt(rawPayload)
             
             val response = encryptedPayload.toByteArray(StandardCharsets.UTF_8) + APDU_OK

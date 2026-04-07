@@ -5,6 +5,7 @@ import android.nfc.NfcAdapter
 import android.nfc.Tag
 import android.nfc.tech.IsoDep
 import android.util.Log
+import com.atheer.sdk.AtheerSdk
 import com.atheer.sdk.model.ChargeRequest
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -83,18 +84,14 @@ class AtheerNfcReader(
             val encryptedDataBytes = paymentResponse.copyOfRange(0, paymentResponse.size - 2)
             val encryptedPayload = String(encryptedDataBytes, StandardCharsets.UTF_8)
 
-            // 4. بناء طلب الدفع المطور
-            val chargeRequest = ChargeRequest(
-                amount = amount,
-                currency = currency,
-                merchantId = merchantId,
-                receiverAccount = receiverAccount,
-                transactionRef = "REF_${System.currentTimeMillis()}",
-                transactionType = transactionType,
-                atheerToken = encryptedPayload,
-                signature = "NFC_SECURE_PAYLOAD",
-                description = "عملية دفع عبر أثير SDK - SoftPOS"
-            )
+            // 4. بناء طلب الدفع عبر دالة التحليل المركزية
+            val chargeRequest = AtheerSdk.getInstance()
+                .parseNfcDataToRequest(encryptedPayload, amount.toDouble(), receiverAccount, transactionType)
+                .copy(
+                    transactionRef = "REF_${android.os.SystemClock.elapsedRealtime()}",
+                    merchantId = merchantId,
+                    description = "عملية دفع عبر أثير SDK - SoftPOS"
+                )
 
             withContext(Dispatchers.Main) {
                 AtheerFeedbackUtils.playSuccessFeedback(context)

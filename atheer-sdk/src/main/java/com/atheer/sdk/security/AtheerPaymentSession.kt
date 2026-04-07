@@ -14,13 +14,13 @@ object AtheerPaymentSession {
 
     private var armedTimestamp: Long = 0L
     private var signature: String? = null
-    private var tokenId: String? = null
+    private var payload: String? = null
 
     /**
-     * تفعيل الجلسة وتخزين التوقيع والرمز.
+     * تفعيل الجلسة وتخزين التوقيع والحمولة.
      */
-    fun arm(tokenId: String, signature: String) {
-        this.tokenId = tokenId
+    fun arm(payload: String, signature: String) {
+        this.payload = payload
         this.signature = signature
         this.armedTimestamp = SystemClock.elapsedRealtime()
     }
@@ -34,9 +34,9 @@ object AtheerPaymentSession {
     }
 
     /**
-     * الحصول على الرمز المميز للجلسة الحالية.
+     * الحصول على حمولة الجلسة الحالية (DeviceID|Counter|Timestamp).
      */
-    fun getTokenId(): String? = if (isSessionArmed()) tokenId else null
+    fun getPayload(): String? = if (isSessionArmed()) payload else null
 
     /**
      * الحصول على التوقيع الرقمي للجلسة الحالية.
@@ -47,7 +47,7 @@ object AtheerPaymentSession {
      * مسح الجلسة فوراً (يستدعى بعد نجاح التوصيل عبر NFC).
      */
     fun clearSession() {
-        tokenId = null
+        payload = null
         signature = null
         armedTimestamp = 0L
     }

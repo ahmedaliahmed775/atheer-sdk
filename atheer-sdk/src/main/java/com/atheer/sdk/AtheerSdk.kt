@@ -183,7 +183,9 @@ class AtheerSdk private constructor(
                     put("currency", transaction.currency)
                     put("receiverAccount", transaction.receiverAccount)
                     put("transactionType", transaction.transactionType)
-                    put("atheerToken", transaction.atheerToken)
+                    put("deviceId", transaction.deviceId)
+                    put("counter", transaction.counter)
+                    put("timestamp", transaction.timestamp)
                     put("authMethod", transaction.authMethod)
                     put("signature", transaction.signature)
                 }.toString()
@@ -210,7 +212,9 @@ class AtheerSdk private constructor(
                 put("currency", request.currency)
                 put("receiverAccount", request.receiverAccount)
                 put("transactionType", request.transactionType)
-                put("atheerToken", request.atheerToken)
+                put("deviceId", request.deviceId)
+                put("counter", request.counter)
+                put("timestamp", request.timestamp)
                 put("authMethod", request.authMethod)
                 put("signature", request.signature)
             }.toString()
@@ -227,7 +231,8 @@ class AtheerSdk private constructor(
     /**
      * تحليل البيانات المستلمة عبر NFC وتحويلها إلى كائن ChargeRequest جاهز.
      * تستخدم هذه الدالة في تطبيق "التاجر" أو "المستقبل" لمعالجة البيانات الخام.
-     * * @param rawNfcData البيانات النصية الخام المستلمة من هاتف الدافع (بصيغة tokenId|signature).
+     *
+     * @param rawNfcData البيانات النصية الخام المستلمة من هاتف الدافع بصيغة DeviceID|Counter|Timestamp|Signature.
      * @param amount المبلغ المطلوب خصمه.
      * @param receiverAccount حساب المستلم (رقم هاتف أو معرف تاجر).
      * @param transactionType نوع العملية (P2M أو P2P).
@@ -243,24 +248,32 @@ class AtheerSdk private constructor(
         // 1. تفكيك النص باستخدام الفاصل |
         val parts = rawNfcData.split("|")
 
-        if (parts.size < 2) {
-            throw IllegalArgumentException("بيانات NFC غير صالحة: التنسيق المتوقع tokenId|signature")
+        if (parts.size < 4) {
+            throw IllegalArgumentException("بيانات NFC غير صالحة: التنسيق المتوقع DeviceID|Counter|Timestamp|Signature")
         }
 
-        val tokenId = parts[0]
-        val signature = parts[1]
+        val deviceId = parts[0]
+        val counter = parts[1].toLongOrNull()
+            ?: throw IllegalArgumentException("بيانات NFC غير صالحة: قيمة Counter غير صحيحة")
+        val timestamp = parts[2].toLongOrNull()
+            ?: throw IllegalArgumentException("بيانات NFC غير صالحة: قيمة Timestamp غير صحيحة")
+        val signature = parts[3]
 
-        if (tokenId.isBlank() || signature.isBlank()) {
-            throw IllegalArgumentException("بيانات NFC ناقصة: التوكن أو التوقيع فارغ")
+        if (deviceId.isBlank() || signature.isBlank()) {
+            throw IllegalArgumentException("بيانات NFC ناقصة: DeviceID أو Signature فارغ")
         }
 
-        // 2. إنشاء وإرجاع كائن ChargeRequest بالهيكل المبسط المعتمد
+        // 2. إنشاء وإرجاع كائن ChargeRequest بالهيكل المحدث
         return ChargeRequest(
             amount = amount.toLong(),
             currency = "YER",
+            merchantId = merchantId,
             receiverAccount = receiverAccount,
+            transactionRef = java.util.UUID.randomUUID().toString(),
             transactionType = transactionType,
-            atheerToken = tokenId,
+            deviceId = deviceId,
+            counter = counter,
+            timestamp = timestamp,
             authMethod = "BIOMETRIC_CRYPTOGRAM",
             signature = signature
         )
