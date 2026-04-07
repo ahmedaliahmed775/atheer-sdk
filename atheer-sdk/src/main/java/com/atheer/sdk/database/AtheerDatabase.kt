@@ -7,6 +7,8 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 import net.sqlcipher.database.SupportFactory
 import com.atheer.sdk.security.AtheerKeystoreManager
+import androidx.security.crypto.EncryptedSharedPreferences
+import androidx.security.crypto.MasterKey
 
 /**
  * ## AtheerDatabase
@@ -40,7 +42,8 @@ abstract class AtheerDatabase : RoomDatabase() {
         }
 
         private fun buildDatabase(context: Context): AtheerDatabase {
-            val keystoreManager = AtheerKeystoreManager()
+            // تمرير الـ context هنا لحل الخطأ الأول
+            val keystoreManager = AtheerKeystoreManager(context)
             val passphrase = getOrCreateDatabasePassphrase(context, keystoreManager)
             val factory = SupportFactory(passphrase)
 
@@ -55,17 +58,27 @@ abstract class AtheerDatabase : RoomDatabase() {
         }
 
         private fun getOrCreateDatabasePassphrase(context: Context, keystore: AtheerKeystoreManager): ByteArray {
-            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            val encryptedKey = prefs.getString(KEY_PASSPHRASE, null)
+            // استخدام التشفير المدمج والآمن لحفظ كلمة مرور قاعدة البيانات
+            val masterKey = MasterKey.Builder(context)
+                .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                .build()
 
-            return if (encryptedKey == null) {
-                val rawKey = keystore.generateNonce()
-                val encrypted = keystore.encrypt(rawKey)
-                prefs.edit().putString(KEY_PASSPHRASE, encrypted).apply()
-                rawKey.toByteArray(Charsets.UTF_8)
-            } else {
-                keystore.decrypt(encryptedKey).toByteArray(Charsets.UTF_8)
+            val encryptedPrefs = EncryptedSharedPreferences.create(
+                context,
+                PREFS_NAME,
+                masterKey,
+                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+            )
+
+            var passphrase = encryptedPrefs.getString(KEY_PASSPHRASE, null)
+
+            if (passphrase == null) {
+                passphrase = keystore.generateNonce()
+                encryptedPrefs.edit().putString(KEY_PASSPHRASE, passphrase).apply()
             }
+            
+            return passphrase.toByteArray(Charsets.UTF_8)
         }
     }
 }
