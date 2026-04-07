@@ -1,71 +1,77 @@
 package com.atheer.sdk.security
 
+import android.content.Context
+import android.content.SharedPreferences
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
+import androidx.security.crypto.EncryptedSharedPreferences
+import androidx.security.crypto.MasterKey
 import android.util.Base64
 import android.util.Log
-import java.security.KeyFactory
-import java.security.KeyPairGenerator
 import java.security.KeyStore
-import java.security.PrivateKey
-import java.security.PublicKey
 import java.security.SecureRandom
-import java.security.Signature
-import java.security.spec.ECGenParameterSpec
-import java.security.spec.X509EncodedKeySpec
-import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
+import javax.crypto.Mac
 import javax.crypto.SecretKey
-import javax.crypto.spec.GCMParameterSpec
+import javax.crypto.spec.SecretKeySpec
 
 /**
  * ## AtheerKeystoreManager
  * المستودع المركزي لإدارة المفاتيح التشفيرية داخل بيئة معزولة (TEE/StrongBox).
  * 
- * يوفر هذا الكلاس وظائف لتوليد مفاتيح AES للتشفير المتماثل ومفاتيح ECDSA للتوقيع الرقمي،
- * مع دعم كامل للمصادقة الحيوية (Biometric Authentication).
+ * تم تحديثه ليدعم معمارية "Zero-Trust Dynamic Key Derivation" عبر:
+ * 1. Master Seed (AES-256) مخزن في Android Keystore.
+ * 2. عداد رتيب (Monotonic Counter) مخزن في EncryptedSharedPreferences.
+ * 3. اشتقاق مفاتيح الاستخدام المحدود (LUK) لكل عملية.
  */
-class AtheerKeystoreManager {
+class AtheerKeystoreManager(private val context: Context) {
 
     companion object {
         private const val TAG = "AtheerKeystoreManager"
         private const val ANDROID_KEYSTORE = "AndroidKeyStore"
-        private const val AES_KEY_ALIAS = "AtheerSDK_MasterKey"
-        private const val ECC_KEY_ALIAS = "AtheerSDK_AuthKey"
-        private const val AES_TRANSFORMATION = "AES/GCM/NoPadding"
-        private const val SIGNING_ALGORITHM = "SHA256withECDSA"
-        private const val GCM_TAG_LENGTH = 128
-        private const val GCM_IV_LENGTH = 12
+        private const val MASTER_SEED_ALIAS = "AtheerSDK_MasterSeed"
+        private const val PREFS_NAME = "atheer_secure_prefs"
+        private const val COUNTER_KEY = "monotonic_counter"
+        private const val HMAC_ALGORITHM = "HmacSHA256"
     }
 
     private val keyStore: KeyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply {
         load(null)
     }
 
+    private val encryptedPrefs: SharedPreferences by lazy {
+        val masterKey = MasterKey.Builder(context)
+            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+            .build()
+
+        EncryptedSharedPreferences.create(
+            context,
+            PREFS_NAME,
+            masterKey,
+            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+        )
+    }
+
     init {
-        if (!keyStore.containsAlias(AES_KEY_ALIAS)) {
-            generateMasterKey()
-        }
-        if (!keyStore.containsAlias(ECC_KEY_ALIAS)) {
-            generateAsymmetricKeyPair()
+        if (!keyStore.containsAlias(MASTER_SEED_ALIAS)) {
+            generateMasterSeed()
         }
     }
 
     /**
-     * توليد مفتاح AES 256-bit للتشفير المحلي.
-     * يتم تخزين المفتاح بشكل آمن داخل Android Keystore.
+     * توليد Master Seed (AES-256) وتخزينه في الـ Keystore المدعوم بالعتاد.
      */
-    private fun generateMasterKey() {
-        Log.d(TAG, "جاري إنشاء المفتاح الرئيسي AES...")
+    private fun generateMasterSeed() {
+        Log.d(TAG, "جاري إنشاء Master Seed آمن...")
         val keyGenerator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE)
         val keySpec = KeyGenParameterSpec.Builder(
-            AES_KEY_ALIAS,
+            MASTER_SEED_ALIAS,
             KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
         )
             .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
             .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
             .setKeySize(256)
-            .setRandomizedEncryptionRequired(true)
             .build()
 
         keyGenerator.init(keySpec)
@@ -73,97 +79,48 @@ class AtheerKeystoreManager {
     }
 
     /**
-     * توليد زوج مفاتيح ECDSA (P-256) للتوقيع الرقمي.
-     * يتطلب مصادقة المستخدم (Biometric) لاستخدام المفتاح الخاص لضمان الموثوقية.
+     * استرجاع الـ Master Seed من الـ Keystore.
      */
-    private fun generateAsymmetricKeyPair() {
-        Log.d(TAG, "جاري إنشاء زوج مفاتيح ECDSA P-256...")
-        val kpg = KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_EC, ANDROID_KEYSTORE)
-        val parameterSpec = KeyGenParameterSpec.Builder(
-            ECC_KEY_ALIAS,
-            KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY
-        )
-            .setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
-            .setDigests(KeyProperties.DIGEST_SHA256)
-            .setUserAuthenticationRequired(true) // يتطلب بصمة لاستخدام المفتاح الخاص
-            .setUserAuthenticationValidityDurationSeconds(-1) // إلزامي لكل عملية (BiometricPrompt)
-            .build()
-
-        kpg.initialize(parameterSpec)
-        kpg.generateKeyPair()
-    }
-
-    /**
-     * استرجاع المفتاح السري AES من المستودع الآمن.
-     */
-    private fun getMasterKey(): SecretKey {
-        val entry = keyStore.getEntry(AES_KEY_ALIAS, null) as? KeyStore.SecretKeyEntry
-            ?: throw IllegalStateException("لم يتم العثور على المفتاح AES")
+    private fun getMasterSeed(): SecretKey {
+        val entry = keyStore.getEntry(MASTER_SEED_ALIAS, null) as? KeyStore.SecretKeyEntry
+            ?: throw IllegalStateException("لم يتم العثور على Master Seed")
         return entry.secretKey
     }
 
     /**
-     * استرجاع المفتاح الخاص ECDSA من المستودع الآمن.
+     * الحصول على قيمة العداد الرتيب الحالية وزيادتها بشكل آمن.
      */
-    private fun getPrivateKey(): PrivateKey {
-        val entry = keyStore.getEntry(ECC_KEY_ALIAS, null) as? KeyStore.PrivateKeyEntry
-            ?: throw IllegalStateException("لم يتم العثور على المفتاح الخاص")
-        return entry.privateKey
+    @Synchronized
+    fun incrementAndGetCounter(): Long {
+        val currentCounter = encryptedPrefs.getLong(COUNTER_KEY, 0L)
+        val nextCounter = currentCounter + 1
+        encryptedPrefs.edit().putLong(COUNTER_KEY, nextCounter).apply()
+        return nextCounter
     }
 
     /**
-     * الحصول على المفتاح العام بصيغة Base64 لمشاركته مع الخادم للتحقق من التواقيع.
+     * اشتقاق مفتاح استخدام محدود (LUK) باستخدام HMAC-SHA256.
+     * الصيغة: LUK = HMAC-SHA256(MasterSeed, Counter)
+     * 
+     * @param counter العداد الرتيب الحالي للعملية.
+     * @return مفتاح LUK مشتق كـ ByteArray.
      */
-    fun getPublicKey(): String {
-        val publicKey = keyStore.getCertificate(ECC_KEY_ALIAS).publicKey
-        return Base64.encodeToString(publicKey.encoded, Base64.NO_WRAP)
+    fun deriveLUK(counter: Long): ByteArray {
+        val mac = Mac.getInstance(HMAC_ALGORITHM)
+        mac.init(getMasterSeed())
+        val counterBytes = counter.toString().toByteArray(Charsets.UTF_8)
+        return mac.doFinal(counterBytes)
     }
 
     /**
-     * الحصول على كائن Signature مهيأ للتوقيع الرقمي.
-     * يستخدم هذا الكائن لتمريره إلى [androidx.biometric.BiometricPrompt.CryptoObject].
+     * توقيع البيانات باستخدام مفتاح LUK المشتق.
      */
-    fun getSignatureInstance(): Signature {
-        return Signature.getInstance(SIGNING_ALGORITHM).apply {
-            initSign(getPrivateKey())
-        }
-    }
-
-    /**
-     * التوقيع على البيانات النصية باستخدام المفتاح الخاص وكائن Signature المصادق عليه حيويًا.
-     */
-    fun signData(payload: String, signature: Signature): String {
-        signature.update(payload.toByteArray(Charsets.UTF_8))
-        val signatureBytes = signature.sign()
+    fun signWithLUK(payload: String, luk: ByteArray): String {
+        val mac = Mac.getInstance(HMAC_ALGORITHM)
+        val secretKey = SecretKeySpec(luk, HMAC_ALGORITHM)
+        mac.init(secretKey)
+        val signatureBytes = mac.doFinal(payload.toByteArray(Charsets.UTF_8))
         return Base64.encodeToString(signatureBytes, Base64.NO_WRAP)
-    }
-
-    /**
-     * تشفير نص باستخدام خوارزمية AES/GCM.
-     * يستخدم لحماية التوكنات أثناء النقل عبر NFC.
-     */
-    fun encrypt(plainText: String): String {
-        val cipher = Cipher.getInstance(AES_TRANSFORMATION)
-        cipher.init(Cipher.ENCRYPT_MODE, getMasterKey())
-        val iv = cipher.iv
-        val encryptedBytes = cipher.doFinal(plainText.toByteArray(Charsets.UTF_8))
-        val combined = iv + encryptedBytes
-        return Base64.encodeToString(combined, Base64.NO_WRAP)
-    }
-
-    /**
-     * فك تشفير نص مشفر مسبقاً باستخدام AES/GCM.
-     */
-    fun decrypt(encryptedText: String): String {
-        val combined = Base64.decode(encryptedText, Base64.NO_WRAP)
-        if (combined.size < GCM_IV_LENGTH) throw IllegalArgumentException("بيانات مشفرة غير صالحة")
-        val iv = combined.copyOfRange(0, GCM_IV_LENGTH)
-        val encryptedBytes = combined.copyOfRange(GCM_IV_LENGTH, combined.size)
-        val cipher = Cipher.getInstance(AES_TRANSFORMATION)
-        val spec = GCMParameterSpec(GCM_TAG_LENGTH, iv)
-        cipher.init(Cipher.DECRYPT_MODE, getMasterKey(), spec)
-        val decryptedBytes = cipher.doFinal(encryptedBytes)
-        return String(decryptedBytes, Charsets.UTF_8)
     }
 
     /**

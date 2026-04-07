@@ -9,7 +9,7 @@ import android.os.Bundle
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.atheer.sdk.security.AtheerPaymentSession
-import com.atheer.sdk.security.AtheerTokenManager
+
 import com.atheer.sdk.security.AtheerKeystoreManager
 import com.atheer.sdk.nfc.AtheerFeedbackUtils
 import java.nio.charset.StandardCharsets
@@ -22,8 +22,8 @@ import java.nio.charset.StandardCharsets
  */
 class AtheerApduService : HostApduService() {
 
-    private val tokenManager by lazy { AtheerTokenManager(applicationContext) }
-    private val keystoreManager by lazy { AtheerKeystoreManager() }
+
+    private val keystoreManager by lazy { AtheerKeystoreManager(applicationContext) }
 
     companion object {
         private const val TAG = "AtheerApduService"
@@ -69,9 +69,8 @@ class AtheerApduService : HostApduService() {
         val (finalTokenId, finalSignature) = if (sessionToken != null && sessionSignature != null) {
             sessionToken to sessionSignature
         } else {
-            Log.i(TAG, "استخدام توكن أوفلاين مرتبط برقم الهاتف...")
-            val offlineToken = tokenManager.consumeNextToken()
-            offlineToken to "OFFLINE_AUTH"
+            Log.e(TAG, "لا توجد جلسة دفع نشطة!")
+            null to null
         }
 
         return if (finalTokenId != null) {

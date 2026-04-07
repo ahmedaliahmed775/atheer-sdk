@@ -59,21 +59,37 @@ class AtheerNfcReader(
             val selectResponse = isoDep.transceive(SELECT_APDU)
             if (!isResponseOk(selectResponse)) throw Exception("تطبيق أثير غير متوفر")
 
-            // 2. طلب بيانات الدفع
+            // 2. قياس Round-Trip Time (RTT) لمنع Relay Attacks
+            // نستخدم SystemClock.elapsedRealtime() لدقة أعلى ومقاومة للتلاعب بالوقت
+            val startTime = android.os.SystemClock.elapsedRealtime()
+            
+            // طلب بيانات الدفع (هذا الطلب هو الذي نقيس زمن استجابته)
             val paymentResponse = isoDep.transceive(GET_PAYMENT_DATA_APDU)
+            
+            val endTime = android.os.SystemClock.elapsedRealtime()
+            val rtt = endTime - startTime
+            
+            Log.d(TAG, "NFC RTT: ${rtt}ms")
+            
+            // إذا تجاوز الـ RTT 50ms، نعتبره هجوم ترحيل (Relay Attack)
+            if (rtt > 50) {
+                Log.e(TAG, "تم اكتشاف محاولة Relay Attack! RTT: ${rtt}ms")
+                throw RelayAttackException("فشل التحقق من المسافة الآمنة (RTT: ${rtt}ms)")
+            }
+
             if (!isResponseOk(paymentResponse)) throw Exception("فشل استلام البيانات")
 
             // 3. استخراج البيانات المشفرة
             val encryptedDataBytes = paymentResponse.copyOfRange(0, paymentResponse.size - 2)
             val encryptedPayload = String(encryptedDataBytes, StandardCharsets.UTF_8)
 
-            // 4. بناء طلب الدفع المطور (متوافق مع المقسم والمحافظ اليمنية)
+            // 4. بناء طلب الدفع المطور
             val chargeRequest = ChargeRequest(
                 amount = amount,
-                currency = currency, // استخدام العملة الممرة في الكونسرتكتور
+                currency = currency,
                 merchantId = merchantId,
                 receiverAccount = receiverAccount,
-                transactionRef = "REF_${System.currentTimeMillis()}", // توليد مرجع فريد لحظي
+                transactionRef = "REF_${System.currentTimeMillis()}",
                 transactionType = transactionType,
                 atheerToken = encryptedPayload,
                 signature = "NFC_SECURE_PAYLOAD",
@@ -85,6 +101,9 @@ class AtheerNfcReader(
                 transactionCallback(chargeRequest)
             }
 
+        } catch (e: RelayAttackException) {
+            Log.e(TAG, "Relay Attack Detected: ${e.message}")
+            withContext(Dispatchers.Main) { errorCallback(e) }
         } catch (e: Exception) {
             Log.e(TAG, "خطأ NFC: ${e.message}")
             withContext(Dispatchers.Main) { errorCallback(e) }
@@ -92,6 +111,11 @@ class AtheerNfcReader(
             try { isoDep.close() } catch (e: Exception) {}
         }
     }
+
+    /**
+     * استثناء مخصص لحالات هجوم الترحيل.
+     */
+    class RelayAttackException(message: String) : Exception(message)
 
     private fun isResponseOk(response: ByteArray) = 
         response.size >= 2 && response[response.size - 2] == STATUS_OK[0] && response[response.size - 1] == STATUS_OK[1]

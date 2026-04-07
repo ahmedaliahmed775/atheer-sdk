@@ -5,7 +5,7 @@ import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.util.Log
 import com.atheer.sdk.model.AtheerError
-import com.atheer.sdk.model.TokensResponse
+
 import com.atheer.sdk.model.TokenInfo
 import com.google.gson.Gson
 import kotlinx.coroutines.Dispatchers
@@ -129,24 +129,5 @@ class AtheerNetworkRouter(private val context: Context) {
         return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
     }
 
-    suspend fun fetchOfflineTokens(apiBaseUrl: String, authToken: String, merchantApiKey: String?, count: Int, limit: Long): Result<List<TokenInfo>> {
-        return try {
-            val url = "$apiBaseUrl/api/v1/wallet/offline-tokens"
-            val json = JSONObject().apply {
-                put("count", count)
-                put("limit", limit)
-            }.toString()
 
-            val responseStr = executeStandard(url, json, authToken, merchantApiKey)
-            val response = Gson().fromJson(responseStr, TokensResponse::class.java)
-
-            if (response?.success == true && response.data?.tokens != null) {
-                Result.success(response.data.tokens)
-            } else {
-                Result.failure(AtheerError.UnknownError(response?.message ?: "فشل استلام الرموز"))
-            }
-        } catch (e: Exception) {
-            Result.failure(e)
-        }
-    }
 }

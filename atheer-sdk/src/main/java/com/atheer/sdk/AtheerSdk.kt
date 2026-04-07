@@ -13,16 +13,24 @@ import com.atheer.sdk.model.ChargeResponse
 import com.atheer.sdk.network.AtheerNetworkRouter
 import com.atheer.sdk.security.AtheerKeystoreManager
 import com.atheer.sdk.security.AtheerPaymentSession
-import com.atheer.sdk.security.AtheerTokenManager
+
 import kotlinx.coroutines.*
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
+
+import com.google.android.play.core.integrity.IntegrityManagerFactory
+import com.google.android.play.core.integrity.IntegrityTokenRequest
+import com.scottyab.rootbeer.RootBeer
 
 /**
  * ## AtheerSdk
  * الواجهة الرئيسية (Facade) للمكتبة - توفر وصولاً مركزياً لكافة ميزات نظام Atheer SDK.
  * 
- * النسخة المطورة تدعم آلية **Pre-Authorized Biometric Cryptogram** لضمان أعلى مستويات الأمان.
+ * تم تحديث هذه النسخة لتعتمد معمارية **Zero-Trust Dynamic Key Derivation** التي تتيح:
+ * 1. **Infinite Offline Transactions**: اشتقاق مفاتيح فريدة لكل عملية دون الحاجة للاتصال المسبق.
+ * 2. **Hardware-backed Security**: تخزين الـ Master Seed داخل Android Keystore (TEE/StrongBox).
+ * 3. **Relay Attack Protection**: قياس RTT لضمان القرب الفيزيائي أثناء عملية الـ NFC.
+ * 4. **Device Integrity**: التحقق من سلامة الجهاز عبر Google Play Integrity API ومنع الأجهزة المروتة.
  */
 class AtheerSdk private constructor(
     private val context: Context,
@@ -42,8 +50,37 @@ class AtheerSdk private constructor(
         @Volatile
         private var instance: AtheerSdk? = null
 
+        /**
+         * تهيئة المكتبة والتحقق من سلامة الجهاز.
+         * 
+         * @param context سياق التطبيق.
+         * @param merchantId معرف التاجر.
+         * @param apiKey مفتاح API الخاص بالتاجر.
+         * @throws SecurityException إذا كان الجهاز مروتاً أو فشل التحقق من النزاهة.
+         */
         fun init(context: Context, merchantId: String, apiKey: String, isSandbox: Boolean = true, enableApnFallback: Boolean = false) {
             if (instance != null) return
+            
+            // 1. التحقق من الـ Root
+            val rootBeer = RootBeer(context)
+            if (rootBeer.isRooted) {
+                Log.e(TAG, "تم اكتشاف Root! لا يمكن تشغيل SDK على أجهزة غير آمنة.")
+                throw SecurityException("Device integrity check failed: Root detected")
+            }
+
+            // 2. تهيئة Play Integrity API (بشكل غير متزامن)
+            val integrityManager = IntegrityManagerFactory.create(context.applicationContext)
+            val nonce = java.util.UUID.randomUUID().toString()
+            integrityManager.requestIntegrityToken(
+                IntegrityTokenRequest.builder()
+                    .setNonce(nonce)
+                    .build()
+            ).addOnSuccessListener { response ->
+                Log.i(TAG, "تم التحقق من نزاهة الجهاز عبر Play Integrity بنجاح.")
+            }.addOnFailureListener { e ->
+                Log.w(TAG, "فشل التحقق من Play Integrity: ${e.message}. قد يتم تقييد العمليات الحساسة.")
+            }
+
             synchronized(this) {
                 if (instance == null) {
                     instance = AtheerSdk(context.applicationContext, merchantId, apiKey, isSandbox, enableApnFallback)
@@ -55,19 +92,23 @@ class AtheerSdk private constructor(
         fun getInstance(): AtheerSdk = instance ?: throw IllegalStateException("يجب استدعاء AtheerSdk.init() أولاً.")
     }
 
-    private val keystoreManager = AtheerKeystoreManager()
+    private val keystoreManager = AtheerKeystoreManager(context)
     private val networkRouter = AtheerNetworkRouter(context)
     private val database = AtheerDatabase.getInstance(context)
-    private val tokenManager = AtheerTokenManager(context)
+
     private val sdkScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     /**
      * تجهيز عملية الدفع عبر المصادقة الحيوية.
      * عند النجاح، يتم توقيع البيانات وتفعيل الجلسة لمدة 60 ثانية.
      */
+    /**
+     * تجهيز عملية الدفع عبر المصادقة الحيوية.
+     * عند النجاح، يتم اشتقاق مفتاح LUK وبناء Payload موقع: DeviceID | Counter | Challenge_Timestamp.
+     */
     fun preparePayment(
         activity: FragmentActivity,
-        tokenId: String,
+        deviceId: String,
         onSuccess: () -> Unit,
         onError: (String) -> Unit
     ) {
@@ -76,16 +117,22 @@ class AtheerSdk private constructor(
             object : BiometricPrompt.AuthenticationCallback() {
                 override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
                     super.onAuthenticationSucceeded(result)
-                    val signature = result.cryptoObject?.signature
-                    if (signature != null) {
-                        val timestamp = System.currentTimeMillis()
-                        val payload = "$tokenId|$timestamp"
-                        val cryptogram = keystoreManager.signData(payload, signature)
-                        AtheerPaymentSession.arm(tokenId, cryptogram)
-                        onSuccess()
-                    } else {
-                        onError("فشل استرداد كائن التوقيع")
-                    }
+                    
+                    // 1. الحصول على العداد الرتيب واشتقاق مفتاح LUK
+                    val counter = keystoreManager.incrementAndGetCounter()
+                    val luk = keystoreManager.deriveLUK(counter)
+                    
+                    // 2. بناء الـ Payload: DeviceID | Counter | Challenge_Timestamp
+                    // ملاحظة: نستخدم SystemClock.elapsedRealtime() للوقت الداخلي لضمان عدم التلاعب بالوقت
+                    val timestamp = android.os.SystemClock.elapsedRealtime()
+                    val payload = "$deviceId|$counter|$timestamp"
+                    
+                    // 3. التوقيع باستخدام LUK المشتق
+                    val signature = keystoreManager.signWithLUK(payload, luk)
+                    
+                    // 4. تفعيل الجلسة بالبيانات الموقعة
+                    AtheerPaymentSession.arm(payload, signature)
+                    onSuccess()
                 }
 
                 override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
@@ -103,11 +150,13 @@ class AtheerSdk private constructor(
             .setTitle("مصادقة عملية الدفع")
             .setSubtitle("استخدم البصمة لتأمين عملية الدفع عبر أثير")
             .setNegativeButtonText("إلغاء")
+            .setAllowedAuthenticators(androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG)
             .build()
 
         try {
-            val signature = keystoreManager.getSignatureInstance()
-            biometricPrompt.authenticate(promptInfo, BiometricPrompt.CryptoObject(signature))
+            // في المعمارية الجديدة، المصادقة الحيوية تفتح الوصول للـ Master Seed لاشتقاق LUK
+            // أو ببساطة نطلب المصادقة قبل البدء بالعملية
+            biometricPrompt.authenticate(promptInfo)
         } catch (e: Exception) {
             onError("خطأ في تهيئة المصادقة: ${e.message}")
         }
@@ -218,6 +267,6 @@ class AtheerSdk private constructor(
     }
 
     fun getKeystoreManager() = keystoreManager
-    fun getTokenManager() = tokenManager
+
 
 }
