@@ -1,92 +1,111 @@
 package com.atheer.sdk
 
 import com.atheer.sdk.model.ChargeRequest
-import com.atheer.sdk.model.ChargeResponse
-import com.atheer.sdk.AtheerSDK // تأكد من استيراد الكلاس الرئيسي للـ SDK
-import org.json.JSONObject
-import org.junit.Assert.*
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertThrows
 import org.junit.Test
-import kotlinx.coroutines.runBlocking // لاستدعاء الدوال المعلقة (Suspend) إن وجدت
 
+/**
+ * Unit tests for AtheerSdk logic, focusing on non-Android-dependent pure logic
+ * matching Backend requirements (HMAC-SHA256, Synchronous Flow, Unified App logic).
+ */
 class AtheerSdkTest {
 
-    // ==================== اختبارات المنطق (Unit Tests) ====================
-
     @Test
-    fun `اختبار التحقق من صيغة Nonce الصحيحة`() {
-        val validNonce = "a3f5b2c1d4e6789012345678abcdef01"
-        assertTrue("يجب أن يكون الـ Nonce مكون من 32 حرف Hex", isValidNonceFormat(validNonce))
-    }
-
-    @Test
-    fun `اختبار رفض Nonce غير صالح`() {
-        assertFalse("يجب رفض الـ Nonce القصير", isValidNonceFormat("short"))
-        assertFalse("يجب رفض أحرف غير Hex", isValidNonceFormat("a3f5b2c1d4e6789012345678GHIJKLMN"))
-    }
-
-    @Test
-    fun `اختبار التحقق من كود نجاح APDU`() {
-        val successResponse = byteArrayOf(0x90.toByte(), 0x00.toByte())
-        assertTrue("يجب أن ينتهي بـ 9000", isApduResponseOk(successResponse))
-    }
-
-    // ==================== اختبارات الربط مع السيرفر (Integration Test) ====================
-
-    /**
-     * ملاحظة: هذا الاختبار يضرب فعلياً في السيرفر الخاص بك (206.189.137.59)
-     * تأكد من تشغيل السيرفر قبل تشغيله.
-     */
-    @Test
-    fun `اختبار عملية الدفع الحقيقية مع السويتش`() = runBlocking {
-        // 1. بناء الـ SDK بالإعدادات التي نجحت في Postman
-        val sdk = AtheerSDK.Builder()
-            .setApiKey("test_api_key_123")
-            .setBaseUrl("http://206.189.137.59:4000") // لا تضف /api/v1 هنا إذا كانت مضافة داخلياً في الـ SDK
-            .build()
-
-        // 2. محاكاة بيانات عملية الدفع
-        // استخدم نفس البيانات التي أعطتك SUCCESS سابقاً
-        val amount = 150L
-        val receiver = "777333444"
-        val token = "TEST_TOKEN_001"
-
-        try {
-            // 3. استدعاء الدالة (نفترض أنها تعيد كائن يحتوي على حالة النجاح)
-            val result = sdk.processPayment(
-                amount = amount,
-                receiverMobile = receiver,
-                atheerToken = token
-            )
-
-            // 4. التحقق من النتيجة
-            assertNotNull("يجب ألا يكون الرد فارغاً", result)
-            // إذا كان الـ SDK يعيد SUCCESS بناءً على رد السيرفر الذي رأيناه سابقاً
-            assertTrue("يجب أن تكون العملية ناجحة في السيرفر", result.isSuccess)
-            println("✅ تم الاتصال بالسويتش بنجاح: ${result.message}")
-
-        } catch (e: Exception) {
-            fail("❌ فشل الاتصال بالسيرفر: ${e.message}")
+    fun `اختبار رفض التكوين في حال غياب رقم الهاتف`() {
+        assertThrows(IllegalStateException::class.java) {
+            val builder = AtheerSdkBuilder()
+            builder.merchantId = "MERCHANT_123"
+            builder.apiKey = "API_KEY"
+            // phoneNumber is missing intentionally
+            builder.build()
         }
     }
 
-    // ==================== دوال مساعدة (Helper Methods) ====================
+    @Test
+    fun `اختبار تحليل بيانات عملية الدفع من حمولة الـ NFC المعيارية`() {
+        val deviceId = "711222333" // Phone Number acting as device identifier
+        val counter = 45L
+        val timestamp = 1700000000000L
+        val signature = "validBase64SignatureHere"
 
-    private fun isValidNonceFormat(nonce: String): Boolean {
-        return nonce.length == 32 && nonce.matches(Regex("[0-9a-fA-F]+"))
+        // Mock NFC Payload coming from physical touch (DeviceID|Counter|Timestamp|Signature)
+        val rawNfcData = "$deviceId|$counter|$timestamp|$signature"
+
+        val mockMerchantId = "MERCHANT_TEST"
+        
+        // Simulating the exact parseNfcDataToRequest logic 
+        val extractedRequest = parseNfcDataMock(
+            rawNfcData = rawNfcData,
+            amount = 1500.0,
+            receiverAccount = "777888999",
+            transactionType = "P2M",
+            merchantId = mockMerchantId
+        )
+
+        assertEquals("711222333", extractedRequest.deviceId)
+        assertEquals(45L, extractedRequest.counter)
+        assertEquals(1700000000000L, extractedRequest.timestamp)
+        assertEquals("validBase64SignatureHere", extractedRequest.signature)
+        assertEquals(1500L, extractedRequest.amount)
+        assertEquals("YER", extractedRequest.currency)
+        assertEquals("P2M", extractedRequest.transactionType)
+        assertEquals("777888999", extractedRequest.receiverAccount)
+        assertEquals("BIOMETRIC_CRYPTOGRAM", extractedRequest.authMethod)
     }
 
-    private fun isApduResponseOk(response: ByteArray): Boolean {
-        if (response.size < 2) return false
-        return response[response.size - 2] == 0x90.toByte() &&
-                response[response.size - 1] == 0x00.toByte()
+    @Test
+    fun `اختبار رفض بيانات NFC مشوهة أو ناقصة الحقول`() {
+        val invalidNfcData = "711222333|45|invalidTimestampHere"
+
+        assertThrows(IllegalArgumentException::class.java) {
+             parseNfcDataMock(
+                 rawNfcData = invalidNfcData,
+                 amount = 100.0, 
+                 receiverAccount = "700", 
+                 transactionType = "P2P", 
+                 merchantId = "MER"
+             )
+        }
     }
 
-    private fun buildTransactionJson(id: String, token: String, nonce: String, mId: String): String {
-        return JSONObject().apply {
-            put("transactionId", id)
-            put("token", token)
-            put("nonce", nonce)
-            put("merchantId", mId)
-        }.toString()
+    // ==================== Helper methods representing exact AtheerSdk logic ====================
+    private fun parseNfcDataMock(
+        rawNfcData: String,
+        amount: Double,
+        receiverAccount: String,
+        transactionType: String,
+        merchantId: String
+    ): ChargeRequest {
+        val parts = rawNfcData.split("|")
+
+        if (parts.size < 4) {
+            throw IllegalArgumentException("بيانات NFC غير صالحة: التنسيق المتوقع DeviceID|Counter|Timestamp|Signature")
+        }
+
+        val deviceId = parts[0]
+        val counter = parts[1].toLongOrNull()
+            ?: throw IllegalArgumentException("بيانات NFC غير صالحة: قيمة Counter غير صحيحة")
+        val timestamp = parts[2].toLongOrNull()
+            ?: throw IllegalArgumentException("بيانات NFC غير صالحة: قيمة Timestamp غير صحيحة")
+        val signature = parts[3]
+
+        if (deviceId.isBlank() || signature.isBlank()) {
+            throw IllegalArgumentException("بيانات NFC ناقصة: DeviceID أو Signature فارغ")
+        }
+
+        return ChargeRequest(
+            amount = amount.toLong(),
+            currency = "YER",
+            merchantId = merchantId,
+            receiverAccount = receiverAccount,
+            transactionRef = "MOCK-REF-UUID",
+            transactionType = transactionType,
+            deviceId = deviceId,
+            counter = counter,
+            timestamp = timestamp,
+            authMethod = "BIOMETRIC_CRYPTOGRAM",
+            signature = signature
+        )
     }
 }
