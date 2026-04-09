@@ -21,7 +21,7 @@ import java.nio.charset.StandardCharsets
  * يقوم هذا الكلاس باستلام البيانات المشفرة وبناء كائن [ChargeRequest] متكامل للمقسم.
  * تم تحديثه ليدعم العملات المتغيرة وأرقام المرجع الفريدة.
  */
-class AtheerNfcReader(
+internal class AtheerNfcReader(
     private val context: Context,
     private val merchantId: String, // معرف التاجر المستلم
     private val receiverAccount: String, // رقم هاتف التاجر أو POS

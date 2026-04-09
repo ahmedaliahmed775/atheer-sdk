@@ -10,7 +10,6 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.atheer.sdk.security.AtheerPaymentSession
 
-import com.atheer.sdk.security.AtheerKeystoreManager
 import com.atheer.sdk.nfc.AtheerFeedbackUtils
 import java.nio.charset.StandardCharsets
 
@@ -21,8 +20,6 @@ import java.nio.charset.StandardCharsets
  * مباشرة دون الحاجة لتشفير إضافي غير ضروري.
  */
 class AtheerApduService : HostApduService() {
-
-    private val keystoreManager by lazy { AtheerKeystoreManager(applicationContext) }
 
     companion object {
         private const val TAG = "AtheerApduService"
@@ -60,33 +57,31 @@ class AtheerApduService : HostApduService() {
 
     /**
      * معالجة طلب بيانات الدفع وتنبيه العميل.
+     *
+     * Fix #4: تم استبدال القراءة المنفصلة (getPayload + getSignature + clearSession)
+     * بعملية ذرية واحدة (consumeSession) لمنع Race Conditions بين خيوط NFC المتزامنة.
      */
     private fun handleGetPaymentData(): ByteArray {
-        val sessionPayload = AtheerPaymentSession.getPayload()
-        val sessionSignature = AtheerPaymentSession.getSignature()
+        // عملية ذرية: قراءة + مسح في نفس اللحظة (Thread-Safe)
+        val session = AtheerPaymentSession.consumeSession()
 
-        val (finalPayload, finalSignature) = if (sessionPayload != null && sessionSignature != null) {
-            sessionPayload to sessionSignature
-        } else {
-            Log.e(TAG, "لا توجد جلسة دفع نشطة!")
-            null to null
-        }
+        return if (session != null) {
+            val (payload, signature) = session
 
-        return if (finalPayload != null) {
             // التغذية الراجعة والاهتزاز
             AtheerFeedbackUtils.playSuccessFeedback(applicationContext)
-            
+
             // إظهار إشعار محلي للمستخدم
             showPaymentSentNotification()
-            
-            // دمج البيانات الموقعة رقمياً وإرسالها (تمت إزالة التشفير القديم)
-            val rawPayload = "$finalPayload|$finalSignature"
+
+            // دمج البيانات الموقعة رقمياً وإرسالها
+            val rawPayload = "$payload|$signature"
             val response = rawPayload.toByteArray(StandardCharsets.UTF_8) + APDU_OK
-            
-            AtheerPaymentSession.clearSession()
+
             Log.i(TAG, "تم إرسال بيانات الدفع بنجاح عبر NFC")
             response
         } else {
+            Log.e(TAG, "لا توجد جلسة دفع نشطة!")
             APDU_SESSION_NOT_ARMED
         }
     }

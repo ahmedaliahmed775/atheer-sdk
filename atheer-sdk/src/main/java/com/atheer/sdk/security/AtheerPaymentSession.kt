@@ -7,18 +7,25 @@ import android.os.SystemClock
  * تدير هذه الفئة الجلسة "المسلحة" (Armed Session) لعملية الدفع.
  * عند نجاح المصادقة الحيوية، يتم تفعيل الجلسة لمدة 60 ثانية فقط.
  * خلال هذه النافذة الزمنية، يمكن لخدمة HCE تقديم بيانات الدفع عبر NFC.
+ *
+ * B-02 Fix: تم جعل الكلاس Thread-Safe باستخدام @Volatile و @Synchronized
+ * لمنع حالات السباق بين خيط NFC (processCommandApdu) والخيط الرئيسي (preparePayment).
+ *
+ * A-01 Fix: تم تعيين الكلاس كـ internal لمنع الوصول من خارج الـ SDK.
  */
-object AtheerPaymentSession {
+internal object AtheerPaymentSession {
 
     private const val SESSION_TIMEOUT_MS = 60_000L // 60 ثانية
 
-    private var armedTimestamp: Long = 0L
-    private var signature: String? = null
-    private var payload: String? = null
+    @Volatile private var armedTimestamp: Long = 0L
+    @Volatile private var signature: String? = null
+    @Volatile private var payload: String? = null
 
     /**
      * تفعيل الجلسة وتخزين التوقيع والحمولة.
+     * B-02: synchronized لمنع الكتابة المتزامنة.
      */
+    @Synchronized
     fun arm(payload: String, signature: String) {
         this.payload = payload
         this.signature = signature
@@ -34,6 +41,20 @@ object AtheerPaymentSession {
     }
 
     /**
+     * استهلاك الجلسة: الحصول على البيانات ومسح الجلسة في عملية ذرية واحدة.
+     * B-02: يمنع استهلاك الجلسة أكثر من مرة (مثلاً من خيطي NFC متزامنين).
+     *
+     * @return Pair(payload, signature) أو null إذا لم تكن الجلسة نشطة.
+     */
+    @Synchronized
+    fun consumeSession(): Pair<String, String>? {
+        if (!isSessionArmed()) return null
+        val result = payload!! to signature!!
+        clearSession()
+        return result
+    }
+
+    /**
      * الحصول على حمولة الجلسة الحالية (DeviceID|Counter|Timestamp).
      */
     fun getPayload(): String? = if (isSessionArmed()) payload else null
@@ -45,7 +66,9 @@ object AtheerPaymentSession {
 
     /**
      * مسح الجلسة فوراً (يستدعى بعد نجاح التوصيل عبر NFC).
+     * B-02: synchronized لمنع مسح جلسة يتم قراءتها حالياً.
      */
+    @Synchronized
     fun clearSession() {
         payload = null
         signature = null

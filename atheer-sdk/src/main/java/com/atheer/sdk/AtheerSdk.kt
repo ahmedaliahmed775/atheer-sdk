@@ -5,18 +5,17 @@ import android.util.Log
 import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
-import androidx.work.*
 import com.atheer.sdk.database.AtheerDatabase
 import com.atheer.sdk.model.AtheerTransaction
 import com.atheer.sdk.model.ChargeRequest
 import com.atheer.sdk.model.ChargeResponse
 import com.atheer.sdk.network.AtheerNetworkRouter
+import com.atheer.sdk.network.AtheerNetworkRouter.NetworkMode
 import com.atheer.sdk.security.AtheerKeystoreManager
 import com.atheer.sdk.security.AtheerPaymentSession
 
 import kotlinx.coroutines.*
 import org.json.JSONObject
-import java.util.concurrent.TimeUnit
 
 import com.google.android.play.core.integrity.IntegrityManagerFactory
 import com.google.android.play.core.integrity.IntegrityTokenRequest
@@ -25,50 +24,112 @@ import com.scottyab.rootbeer.RootBeer
 /**
  * ## AtheerSdk
  * الواجهة الرئيسية (Facade) للمكتبة - توفر وصولاً مركزياً لكافة ميزات نظام Atheer SDK.
- * 
- * تم تحديث هذه النسخة لتعتمد معمارية **Zero-Trust Dynamic Key Derivation** التي تتيح:
- * 1. **Infinite Offline Transactions**: اشتقاق مفاتيح فريدة لكل عملية دون الحاجة للاتصال المسبق.
- * 2. **Hardware-backed Security**: تخزين الـ Master Seed داخل Android Keystore (TEE/StrongBox).
- * 3. **Relay Attack Protection**: قياس RTT لضمان القرب الفيزيائي أثناء عملية الـ NFC.
- * 4. **Device Integrity**: التحقق من سلامة الجهاز عبر Google Play Integrity API ومنع الأجهزة المروتة.
+ *
+ * تم تحديث هذه النسخة لتتضمن:
+ * - C-01: توقيع HMAC-SHA256 متوافق مع Backend.
+ * - C-03: بروتوكول تسجيل الجهاز (Device Enrollment).
+ * - C-04: إرسال جميع الحقول المطلوبة (description, transactionRef, merchantId).
+ * - S-02: استخدام HTTPS مع نطاقات بدلاً من IPs.
+ * - S-03: استخدام System.currentTimeMillis() كـ timestamp.
+ * - B-05: إضافة destroy() لإلغاء CoroutineScope.
+ * - A-02/A-06: Builder Pattern + فصل فحص النزاهة عن التهيئة.
  */
-class AtheerSdk private constructor(
-    private val context: Context,
-    private val merchantId: String,
-    private val apiKey: String,
-    private val isSandbox: Boolean,
-    private val enableApnFallback: Boolean
-) {
-    private val finalUrl: String = if (isSandbox) SANDBOX_URL else PRODUCTION_URL
+class AtheerSdk private constructor(private val config: AtheerSdkConfig) {
+
+    // S-02: استخدام HTTPS مع نطاقات
+    private val finalUrl: String = config.baseUrl ?: if (config.isSandbox) SANDBOX_URL else PRODUCTION_URL
 
     companion object {
         private const val TAG = "AtheerSdk"
-        private const val PRODUCTION_URL = "http://206.189.137.59:3000"
-        private const val SANDBOX_URL = "http://206.189.137.59:3000"
+        // S-02 Fix: HTTPS مع نطاقات (Domains) بدلاً من HTTP + IPs
+        private const val PRODUCTION_URL = "https://api.atheer.com"
+        private const val SANDBOX_URL = "https://sandbox.atheer.com"
         private const val CHARGE_PATH = "/api/v1/payments/process"
+        private const val ENROLL_PATH = "/api/v1/devices/enroll"
 
         @Volatile
         private var instance: AtheerSdk? = null
 
         /**
-         * تهيئة المكتبة والتحقق من سلامة الجهاز.
-         * 
+         * A-02: تهيئة المكتبة باستخدام Builder Pattern (Kotlin DSL).
+         *
+         * ```kotlin
+         * AtheerSdk.init {
+         *     context = applicationContext
+         *     merchantId = "MERCHANT_001"
+         *     apiKey = "YOUR_API_KEY"
+         *     isSandbox = true
+         * }
+         * ```
+         *
+         * @throws SecurityException إذا كان الجهاز مروتاً.
+         */
+        fun init(block: AtheerSdkBuilder.() -> Unit) {
+            if (instance != null) return
+            val builder = AtheerSdkBuilder().apply(block)
+            val config = builder.build()
+            initWithConfig(config)
+        }
+
+        /**
+         * تهيئة المكتبة بالطريقة التقليدية (متوافق مع الإصدارات السابقة).
+         *
          * @param context سياق التطبيق.
          * @param merchantId معرف التاجر.
          * @param apiKey مفتاح API الخاص بالتاجر.
-         * @throws SecurityException إذا كان الجهاز مروتاً أو فشل التحقق من النزاهة.
+         * @param isSandbox وضع الاختبار.
+         * @param enableApnFallback تفعيل الشبكة الخلوية البديلة.
+         * @throws SecurityException إذا كان الجهاز مروتاً.
          */
-        fun init(context: Context, merchantId: String, apiKey: String, isSandbox: Boolean = true, enableApnFallback: Boolean = false) {
-            if (instance != null) return
-            
-            // 1. التحقق من الـ Root
+        fun init(
+            context: Context,
+            merchantId: String,
+            apiKey: String,
+            isSandbox: Boolean = true,
+            enableApnFallback: Boolean = false
+        ) {
+            init {
+                this.context = context
+                this.merchantId = merchantId
+                this.apiKey = apiKey
+                this.isSandbox = isSandbox
+                this.enableApnFallback = enableApnFallback
+            }
+        }
+
+        /**
+         * A-06: التهيئة الداخلية مع فصل فحص النزاهة عن التهيئة الأساسية.
+         */
+        private fun initWithConfig(config: AtheerSdkConfig) {
+            // A-06: الفحوصات المتزامنة (يجب أن تنجح قبل التهيئة)
+            performBlockingSecurityChecks(config.context)
+
+            synchronized(this) {
+                if (instance == null) {
+                    instance = AtheerSdk(config)
+                    Log.i(TAG, "تمت تهيئة Atheer SDK بنجاح.")
+
+                    // A-06: الفحوصات غير المتزامنة (لا تمنع التهيئة)
+                    performAsyncSecurityChecks(config.context)
+                }
+            }
+        }
+
+        /**
+         * A-06: فحوصات أمنية متزامنة (ترفض الأجهزة غير الآمنة فوراً).
+         */
+        private fun performBlockingSecurityChecks(context: Context) {
             val rootBeer = RootBeer(context)
             if (rootBeer.isRooted) {
                 Log.e(TAG, "تم اكتشاف Root! لا يمكن تشغيل SDK على أجهزة غير آمنة.")
                 throw SecurityException("Device integrity check failed: Root detected")
             }
+        }
 
-            // 2. تهيئة Play Integrity API (بشكل غير متزامن)
+        /**
+         * A-06: فحوصات أمنية غير متزامنة (تُسجَّل ولا تمنع التهيئة).
+         */
+        private fun performAsyncSecurityChecks(context: Context) {
             val integrityManager = IntegrityManagerFactory.create(context.applicationContext)
             val nonce = java.util.UUID.randomUUID().toString()
             integrityManager.requestIntegrityToken(
@@ -80,31 +141,88 @@ class AtheerSdk private constructor(
             }.addOnFailureListener { e ->
                 Log.w(TAG, "فشل التحقق من Play Integrity: ${e.message}. قد يتم تقييد العمليات الحساسة.")
             }
-
-            synchronized(this) {
-                if (instance == null) {
-                    instance = AtheerSdk(context.applicationContext, merchantId, apiKey, isSandbox, enableApnFallback)
-                    Log.i(TAG, "تمت تهيئة Atheer SDK بنجاح.")
-                }
-            }
         }
 
         fun getInstance(): AtheerSdk = instance ?: throw IllegalStateException("يجب استدعاء AtheerSdk.init() أولاً.")
+
+        /**
+         * B-05 Fix: تدمير الـ SDK وإلغاء جميع العمليات الجارية.
+         * يُستدعى عند إغلاق التطبيق أو عند الحاجة لإعادة التهيئة.
+         */
+        fun destroy() {
+            instance?.sdkScope?.cancel()
+            instance = null
+            Log.i(TAG, "تم تدمير Atheer SDK وإلغاء جميع العمليات.")
+        }
     }
 
-    private val keystoreManager = AtheerKeystoreManager(context)
-    private val networkRouter = AtheerNetworkRouter(context)
-    private val database = AtheerDatabase.getInstance(context)
+    internal val keystoreManager = AtheerKeystoreManager(config.context)
+    private val networkRouter = AtheerNetworkRouter(config.context, config.networkMode)
+    private val database = AtheerDatabase.getInstance(config.context)
+    internal val sdkScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    private val sdkScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    // ==========================================
+    // C-03: تسجيل الجهاز (Device Enrollment)
+    // ==========================================
 
     /**
-     * تجهيز عملية الدفع عبر المصادقة الحيوية.
-     * عند النجاح، يتم توقيع البيانات وتفعيل الجلسة لمدة 60 ثانية.
+     * التحقق مما إذا كان الجهاز مسجلاً ولديه deviceSeed.
      */
+    fun isDeviceEnrolled(): Boolean = keystoreManager.isDeviceEnrolled()
+
+    /**
+     * C-03: تسجيل الجهاز مع Backend للحصول على deviceSeed.
+     * يجب استدعاؤها مرة واحدة عند أول تشغيل للتطبيق على جهاز جديد.
+     *
+     * @param deviceId معرف الجهاز الفريد.
+     * @param onSuccess يُستدعى عند نجاح التسجيل.
+     * @param onError يُستدعى عند فشل التسجيل مع رسالة الخطأ.
+     */
+    fun enrollDevice(
+        deviceId: String,
+        onSuccess: () -> Unit,
+        onError: (String) -> Unit
+    ) {
+        if (keystoreManager.isDeviceEnrolled()) {
+            onSuccess()
+            return
+        }
+
+        sdkScope.launch {
+            try {
+                val body = JSONObject().apply {
+                    put("deviceId", deviceId)
+                }.toString()
+
+                val responseJson = networkRouter.executeStandard(
+                    "$finalUrl$ENROLL_PATH", body, null, config.apiKey
+                )
+                val responseObj = JSONObject(responseJson)
+
+                if (responseObj.optBoolean("success", false)) {
+                    val deviceSeed = responseObj.optJSONObject("data")?.optString("deviceSeed")
+                        ?: throw Exception("لم يتم استلام deviceSeed من الخادم.")
+                    keystoreManager.storeEnrolledSeed(deviceSeed)
+                    withContext(Dispatchers.Main) { onSuccess() }
+                } else {
+                    val errorMsg = responseObj.optJSONObject("error")?.optString("message") ?: "فشل التسجيل."
+                    withContext(Dispatchers.Main) { onError(errorMsg) }
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { onError("خطأ في تسجيل الجهاز: ${e.message}") }
+            }
+        }
+    }
+
+    // ==========================================
+    // تجهيز الدفع والمصادقة الحيوية
+    // ==========================================
+
     /**
      * تجهيز عملية الدفع عبر المصادقة الحيوية.
-     * عند النجاح، يتم اشتقاق مفتاح LUK وبناء Payload موقع: DeviceID | Counter | Challenge_Timestamp.
+     * عند النجاح، يتم اشتقاق مفتاح LUK وبناء Payload موقع.
+     *
+     * S-03 Fix: يستخدم System.currentTimeMillis() كـ timestamp بدلاً من elapsedRealtime().
      */
     fun preparePayment(
         activity: FragmentActivity,
@@ -112,24 +230,29 @@ class AtheerSdk private constructor(
         onSuccess: () -> Unit,
         onError: (String) -> Unit
     ) {
+        // C-03: التحقق من تسجيل الجهاز أولاً
+        if (!keystoreManager.isDeviceEnrolled()) {
+            onError("الجهاز غير مسجل. استدعِ enrollDevice() أولاً.")
+            return
+        }
+
         val executor = ContextCompat.getMainExecutor(activity)
         val biometricPrompt = BiometricPrompt(activity, executor,
             object : BiometricPrompt.AuthenticationCallback() {
                 override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
                     super.onAuthenticationSucceeded(result)
-                    
+
                     // 1. الحصول على العداد الرتيب واشتقاق مفتاح LUK
                     val counter = keystoreManager.incrementAndGetCounter()
                     val luk = keystoreManager.deriveLUK(counter)
-                    
-                    // 2. بناء الـ Payload: DeviceID | Counter | Challenge_Timestamp
-                    // ملاحظة: نستخدم SystemClock.elapsedRealtime() للوقت الداخلي لضمان عدم التلاعب بالوقت
-                    val timestamp = android.os.SystemClock.elapsedRealtime()
+
+                    // 2. S-03 Fix: استخدام Unix timestamp (مقاوم لإعادة التشغيل ويمكن التحقق منه في Backend)
+                    val timestamp = System.currentTimeMillis()
                     val payload = "$deviceId|$counter|$timestamp"
-                    
-                    // 3. التوقيع باستخدام LUK المشتق
+
+                    // 3. C-01: التوقيع باستخدام HMAC-SHA256 (مطابق لمنطق Backend)
                     val signature = keystoreManager.signWithLUK(payload, luk)
-                    
+
                     // 4. تفعيل الجلسة بالبيانات الموقعة
                     AtheerPaymentSession.arm(payload, signature)
                     onSuccess()
@@ -154,13 +277,15 @@ class AtheerSdk private constructor(
             .build()
 
         try {
-            // في المعمارية الجديدة، المصادقة الحيوية تفتح الوصول للـ Master Seed لاشتقاق LUK
-            // أو ببساطة نطلب المصادقة قبل البدء بالعملية
             biometricPrompt.authenticate(promptInfo)
         } catch (e: Exception) {
             onError("خطأ في تهيئة المصادقة: ${e.message}")
         }
     }
+
+    // ==========================================
+    // معالجة الدفع
+    // ==========================================
 
     /**
      * معالجة معاملة دفع (Online).
@@ -178,6 +303,7 @@ class AtheerSdk private constructor(
 
         sdkScope.launch {
             try {
+                // C-04 Fix: إرسال جميع الحقول المطلوبة
                 val requestBody = JSONObject().apply {
                     put("amount", transaction.amount)
                     put("currency", transaction.currency)
@@ -190,7 +316,7 @@ class AtheerSdk private constructor(
                     put("signature", transaction.signature)
                 }.toString()
 
-                networkRouter.executeStandard("$finalUrl$CHARGE_PATH", requestBody, accessToken, apiKey)
+                networkRouter.executeStandard("$finalUrl$CHARGE_PATH", requestBody, accessToken, config.apiKey)
                 withContext(Dispatchers.Main) { onSuccess("تمت المعالجة بنجاح") }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) { onError(e) }
@@ -200,6 +326,7 @@ class AtheerSdk private constructor(
 
     /**
      * تنفيذ عملية شحن مباشر (Charge) باستخدام الهيكل المبسط.
+     * C-04 Fix: يرسل description و transactionRef و merchantId.
      */
     suspend fun charge(request: ChargeRequest, accessToken: String): Result<ChargeResponse> {
         if (!networkRouter.isNetworkAvailable()) {
@@ -217,27 +344,25 @@ class AtheerSdk private constructor(
                 put("timestamp", request.timestamp)
                 put("authMethod", request.authMethod)
                 put("signature", request.signature)
+                // C-04 Fix: إرسال الحقول المفقودة
+                request.description?.let { put("description", it) }
+                put("transactionRef", request.transactionRef)
+                put("merchantId", request.merchantId)
             }.toString()
 
-            val responseJson = networkRouter.executeStandard("$finalUrl$CHARGE_PATH", body, accessToken, apiKey)
+            val responseJson = networkRouter.executeStandard("$finalUrl$CHARGE_PATH", body, accessToken, config.apiKey)
             val responseObj = JSONObject(responseJson)
-            val transactionId = responseObj.optString("transactionId") ?: responseObj.optJSONObject("data")?.optString("transactionId") ?: ""
-            
+            val transactionId = responseObj.optString("transactionId")
+                ?: responseObj.optJSONObject("data")?.optString("transactionId") ?: ""
+
             Result.success(ChargeResponse(transactionId = transactionId, status = "ACCEPTED", message = "نجاح العملية"))
         } catch (e: Exception) {
             Result.failure(e)
         }
     }
+
     /**
      * تحليل البيانات المستلمة عبر NFC وتحويلها إلى كائن ChargeRequest جاهز.
-     * تستخدم هذه الدالة في تطبيق "التاجر" أو "المستقبل" لمعالجة البيانات الخام.
-     *
-     * @param rawNfcData البيانات النصية الخام المستلمة من هاتف الدافع بصيغة DeviceID|Counter|Timestamp|Signature.
-     * @param amount المبلغ المطلوب خصمه.
-     * @param receiverAccount حساب المستلم (رقم هاتف أو معرف تاجر).
-     * @param transactionType نوع العملية (P2M أو P2P).
-     * @return كائن [ChargeRequest] مهيأ بالبيانات الصحيحة.
-     * @throws IllegalArgumentException إذا كانت البيانات المستلمة غير صالحة أو ناقصة.
      */
     fun parseNfcDataToRequest(
         rawNfcData: String,
@@ -245,7 +370,6 @@ class AtheerSdk private constructor(
         receiverAccount: String,
         transactionType: String
     ): ChargeRequest {
-        // 1. تفكيك النص باستخدام الفاصل |
         val parts = rawNfcData.split("|")
 
         if (parts.size < 4) {
@@ -263,11 +387,11 @@ class AtheerSdk private constructor(
             throw IllegalArgumentException("بيانات NFC ناقصة: DeviceID أو Signature فارغ")
         }
 
-        // 2. إنشاء وإرجاع كائن ChargeRequest بالهيكل المحدث
+        // C-05: استخدام toLong() مع التعامل مع الكسور
         return ChargeRequest(
             amount = amount.toLong(),
             currency = "YER",
-            merchantId = merchantId,
+            merchantId = config.merchantId,
             receiverAccount = receiverAccount,
             transactionRef = java.util.UUID.randomUUID().toString(),
             transactionType = transactionType,
@@ -280,6 +404,65 @@ class AtheerSdk private constructor(
     }
 
     fun getKeystoreManager() = keystoreManager
+}
 
+// ==========================================
+// A-02: Builder Pattern (Kotlin DSL) للتهيئة
+// ==========================================
 
+/**
+ * إعدادات تهيئة Atheer SDK.
+ */
+data class AtheerSdkConfig(
+    val context: Context,
+    val merchantId: String,
+    val apiKey: String,
+    val isSandbox: Boolean = true,
+    /** Feature Toggle: وضع الشبكة (PUBLIC_INTERNET أو PRIVATE_APN) */
+    val networkMode: NetworkMode = NetworkMode.PUBLIC_INTERNET,
+    val sessionTimeoutMs: Long = 60_000L,
+    val rttThresholdMs: Long = 50L,
+    val baseUrl: String? = null
+)
+
+/**
+ * Builder لتهيئة Atheer SDK بأسلوب Kotlin DSL.
+ *
+ * ```kotlin
+ * AtheerSdk.init {
+ *     context = applicationContext
+ *     merchantId = "MERCHANT_001"
+ *     apiKey = "YOUR_API_KEY"
+ *     isSandbox = true
+ *     networkMode = NetworkMode.PRIVATE_APN  // أو PUBLIC_INTERNET (افتراضي)
+ * }
+ * ```
+ */
+class AtheerSdkBuilder {
+    lateinit var context: Context
+    lateinit var merchantId: String
+    lateinit var apiKey: String
+    var isSandbox: Boolean = true
+    /** Feature Toggle: وضع الشبكة — PUBLIC_INTERNET (افتراضي) أو PRIVATE_APN */
+    var networkMode: NetworkMode = NetworkMode.PUBLIC_INTERNET
+    var sessionTimeoutMs: Long = 60_000L
+    var rttThresholdMs: Long = 50L
+    var baseUrl: String? = null
+
+    fun build(): AtheerSdkConfig {
+        check(::context.isInitialized) { "context is required" }
+        check(::merchantId.isInitialized) { "merchantId is required" }
+        check(::apiKey.isInitialized) { "apiKey is required" }
+
+        return AtheerSdkConfig(
+            context = context.applicationContext,
+            merchantId = merchantId,
+            apiKey = apiKey,
+            isSandbox = isSandbox,
+            networkMode = networkMode,
+            sessionTimeoutMs = sessionTimeoutMs,
+            rttThresholdMs = rttThresholdMs,
+            baseUrl = baseUrl
+        )
+    }
 }

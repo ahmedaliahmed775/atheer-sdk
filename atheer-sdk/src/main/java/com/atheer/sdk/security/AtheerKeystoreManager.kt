@@ -18,13 +18,18 @@ import javax.crypto.spec.SecretKeySpec
 /**
  * ## AtheerKeystoreManager
  * المستودع المركزي لإدارة المفاتيح التشفيرية داخل بيئة معزولة (TEE/StrongBox).
- * 
- * تم تحديثه ليدعم معمارية "Zero-Trust Dynamic Key Derivation" عبر:
- * 1. Master Seed (AES-256) مخزن في Android Keystore.
+ *
+ * يدعم معمارية "Zero-Trust Dynamic Key Derivation" عبر:
+ * 1. Device Enrollment: استلام deviceSeed من Backend وتخزينه بشكل آمن.
  * 2. عداد رتيب (Monotonic Counter) مخزن في EncryptedSharedPreferences.
  * 3. اشتقاق مفاتيح الاستخدام المحدود (LUK) لكل عملية.
+ *
+ * C-03 Fix: تم تعديل اشتقاق المفاتيح ليعتمد على deviceSeed المستلم من Backend
+ * بدلاً من Master Seed المحلي، لضمان تطابق المفاتيح في الطرفين.
+ *
+ * A-01 Fix: تم تعيين الكلاس كـ internal لمنع الوصول من خارج الـ SDK.
  */
-class AtheerKeystoreManager(private val context: Context) {
+internal class AtheerKeystoreManager(private val context: Context) {
 
     companion object {
         private const val TAG = "AtheerKeystoreManager"
@@ -32,6 +37,8 @@ class AtheerKeystoreManager(private val context: Context) {
         private const val MASTER_SEED_ALIAS = "AtheerSDK_MasterSeed"
         private const val PREFS_NAME = "atheer_secure_prefs"
         private const val COUNTER_KEY = "monotonic_counter"
+        private const val ENROLLED_SEED_KEY = "enrolled_device_seed"
+        private const val DEVICE_ENROLLED_KEY = "device_enrolled"
         private const val HMAC_ALGORITHM = "HmacSHA256"
     }
 
@@ -54,6 +61,7 @@ class AtheerKeystoreManager(private val context: Context) {
     }
 
     init {
+        // الاحتفاظ بتوليد Master Seed المحلي للتوافق مع الإصدارات السابقة
         if (!keyStore.containsAlias(MASTER_SEED_ALIAS)) {
             generateMasterSeed()
         }
@@ -61,6 +69,7 @@ class AtheerKeystoreManager(private val context: Context) {
 
     /**
      * توليد Master Seed (AES-256) وتخزينه في الـ Keystore المدعوم بالعتاد.
+     * يُستخدم فقط كبديل (fallback) في حالة عدم وجود enrolled seed.
      */
     private fun generateMasterSeed() {
         Log.d(TAG, "جاري إنشاء Master Seed آمن...")
@@ -78,14 +87,45 @@ class AtheerKeystoreManager(private val context: Context) {
         keyGenerator.generateKey()
     }
 
+    // ==========================================
+    // C-03: بروتوكول تسجيل الجهاز (Device Enrollment)
+    // ==========================================
+
     /**
-     * استرجاع الـ Master Seed من الـ Keystore.
+     * التحقق مما إذا كان الجهاز مسجلاً (لديه deviceSeed من Backend).
      */
-    private fun getMasterSeed(): SecretKey {
-        val entry = keyStore.getEntry(MASTER_SEED_ALIAS, null) as? KeyStore.SecretKeyEntry
-            ?: throw IllegalStateException("لم يتم العثور على Master Seed")
-        return entry.secretKey
+    fun isDeviceEnrolled(): Boolean {
+        return encryptedPrefs.getBoolean(DEVICE_ENROLLED_KEY, false) &&
+               encryptedPrefs.getString(ENROLLED_SEED_KEY, null) != null
     }
+
+    /**
+     * تخزين الـ deviceSeed المستلم من Backend أثناء التسجيل.
+     * يُخزَّن في EncryptedSharedPreferences (مشفر بـ AES-256-GCM).
+     *
+     * @param seedBase64 الـ seed المشتق من Backend مشفر بـ Base64.
+     */
+    fun storeEnrolledSeed(seedBase64: String) {
+        encryptedPrefs.edit()
+            .putString(ENROLLED_SEED_KEY, seedBase64)
+            .putBoolean(DEVICE_ENROLLED_KEY, true)
+            .apply()
+        Log.i(TAG, "تم تخزين deviceSeed بنجاح.")
+    }
+
+    /**
+     * استرجاع الـ deviceSeed المسجَّل كـ ByteArray.
+     * @throws IllegalStateException إذا لم يكن الجهاز مسجلاً.
+     */
+    private fun getEnrolledSeed(): ByteArray {
+        val seedBase64 = encryptedPrefs.getString(ENROLLED_SEED_KEY, null)
+            ?: throw IllegalStateException("الجهاز غير مسجل. استدعِ enrollDevice() أولاً.")
+        return Base64.decode(seedBase64, Base64.NO_WRAP)
+    }
+
+    // ==========================================
+    // العداد الرتيب (Monotonic Counter)
+    // ==========================================
 
     /**
      * الحصول على قيمة العداد الرتيب الحالية وزيادتها بشكل آمن.
@@ -98,22 +138,33 @@ class AtheerKeystoreManager(private val context: Context) {
         return nextCounter
     }
 
+    // ==========================================
+    // اشتقاق المفاتيح والتوقيع
+    // ==========================================
+
     /**
      * اشتقاق مفتاح استخدام محدود (LUK) باستخدام HMAC-SHA256.
-     * الصيغة: LUK = HMAC-SHA256(MasterSeed, Counter)
-     * 
+     *
+     * C-03 Fix: يستخدم الـ enrolledSeed (من Backend) بدلاً من MasterSeed المحلي
+     * لضمان تطابق الاشتقاق في الطرفين:
+     *   SDK:     LUK = HMAC-SHA256(enrolledSeed, counter)
+     *   Backend: LUK = HMAC-SHA256(HMAC-SHA256(MASTER_SEED, deviceId), counter)
+     *
      * @param counter العداد الرتيب الحالي للعملية.
-     * @return مفتاح LUK مشتق كـ ByteArray.
+     * @return مفتاح LUK مشتق كـ ByteArray (32 بايت).
      */
     fun deriveLUK(counter: Long): ByteArray {
+        val seedBytes = getEnrolledSeed()
         val mac = Mac.getInstance(HMAC_ALGORITHM)
-        mac.init(getMasterSeed())
+        val secretKey = SecretKeySpec(seedBytes, HMAC_ALGORITHM)
+        mac.init(secretKey)
         val counterBytes = counter.toString().toByteArray(Charsets.UTF_8)
         return mac.doFinal(counterBytes)
     }
 
     /**
      * توقيع البيانات باستخدام مفتاح LUK المشتق.
+     * C-01: يطابق التحقق في Backend — verifyHmacSignature()
      */
     fun signWithLUK(payload: String, luk: ByteArray): String {
         val mac = Mac.getInstance(HMAC_ALGORITHM)

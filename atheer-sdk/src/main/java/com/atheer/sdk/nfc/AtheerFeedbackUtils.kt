@@ -13,7 +13,7 @@ import android.media.ToneGenerator
  * فئة مساعدة لتوفير تغذية راجعة (Feedback) للمستخدم عند نجاح عملية Tap عبر NFC.
  * تتضمن اهتزازاً (Haptic) وصوتاً (Audio) لضمان تجربة مستخدم مشابهة للمعايير العالمية.
  */
-object AtheerFeedbackUtils {
+internal object AtheerFeedbackUtils {
 
     fun playSuccessFeedback(context: Context) {
         // 1. الاهتزاز (Haptic Feedback)
