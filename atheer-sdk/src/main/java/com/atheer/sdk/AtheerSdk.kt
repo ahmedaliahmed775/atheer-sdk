@@ -174,7 +174,21 @@ class AtheerSdk private constructor(private val config: AtheerSdkConfig) {
      * C-03: تسجيل الجهاز مع Backend للحصول على deviceSeed.
      * يجب استدعاؤها مرة واحدة عند أول تشغيل للتطبيق على جهاز جديد.
      *
-     * @param deviceId معرف الجهاز الفريد.
+     * في بيئة التطبيق الموحد (Unified App)، يُستخدم config.phoneNumber تلقائياً كـ deviceId.
+     *
+     * @param onSuccess يُستدعى عند نجاح التسجيل.
+     * @param onError يُستدعى عند فشل التسجيل مع رسالة الخطأ.
+     */
+    fun enrollDevice(
+        onSuccess: () -> Unit,
+        onError: (String) -> Unit
+    ) = enrollDevice(config.phoneNumber, onSuccess, onError)
+
+    /**
+     * C-03: تسجيل الجهاز مع Backend للحصول على deviceSeed.
+     * النسخة المُخصَّصة: تقبل معرف جهاز مُخصَّص.
+     *
+     * @param deviceId معرف الجهاز (في Unified App = رقم الهاتف).
      * @param onSuccess يُستدعى عند نجاح التسجيل.
      * @param onError يُستدعى عند فشل التسجيل مع رسالة الخطأ.
      */
@@ -220,7 +234,24 @@ class AtheerSdk private constructor(private val config: AtheerSdkConfig) {
 
     /**
      * تجهيز عملية الدفع عبر المصادقة الحيوية.
-     * عند النجاح، يتم اشتقاق مفتاح LUK وبناء Payload موقع.
+     * في بيئة التطبيق الموحد (Unified App)، يستخدم config.phoneNumber تلقائياً كـ deviceId
+     * لضمان أن رقم الهاتف هو المعرف الوحيد في جميع طبقات النظام.
+     *
+     * S-03 Fix: يستخدم System.currentTimeMillis() كـ timestamp بدلاً من elapsedRealtime().
+     *
+     * @param activity النشاط الحالي لعرض BiometricPrompt.
+     * @param onSuccess يُستدعى عند نجاح المصادقة والجلسة مسلحة.
+     * @param onError يُستدعى عند فشل المصادقة.
+     */
+    fun preparePayment(
+        activity: FragmentActivity,
+        onSuccess: () -> Unit,
+        onError: (String) -> Unit
+    ) = preparePayment(activity, config.phoneNumber, onSuccess, onError)
+
+    /**
+     * تجهيز عملية الدفع عبر المصادقة الحيوية.
+     * النسخة المُخصَّصة: تقبل معرف جهاز مُخصَّص.
      *
      * S-03 Fix: يستخدم System.currentTimeMillis() كـ timestamp بدلاً من elapsedRealtime().
      */
@@ -248,6 +279,7 @@ class AtheerSdk private constructor(private val config: AtheerSdkConfig) {
 
                     // 2. S-03 Fix: استخدام Unix timestamp (مقاوم لإعادة التشغيل ويمكن التحقق منه في Backend)
                     val timestamp = System.currentTimeMillis()
+                    // deviceId = رقم الهاتف في Unified App → يُستخدم كـ customerIdentifier في جوالي
                     val payload = "$deviceId|$counter|$timestamp"
 
                     // 3. C-01: التوقيع باستخدام HMAC-SHA256 (مطابق لمنطق Backend)
@@ -412,11 +444,20 @@ class AtheerSdk private constructor(private val config: AtheerSdkConfig) {
 
 /**
  * إعدادات تهيئة Atheer SDK.
+ *
+ * في بيئة التطبيق الموحد (Unified App):
+ *   - phoneNumber = رقم الهاتف المرتبط بهذا المستخدم (العميل أو التاجر)
+ *   - merchantId  = معرف وصفي (يمكن ضبطه على نفس رقم الهاتف)
+ *   - الـ SDK يستخدم phoneNumber تلقائياً كـ deviceId في enrollDevice وpreparePayment
  */
 data class AtheerSdkConfig(
     val context: Context,
     val merchantId: String,
     val apiKey: String,
+    /** رقم الهاتف المرتبط بهذا المستخدم — المعرف الوحيد في بيئة Unified App.
+     *  يُستخدم كـ deviceId في تسجيل الجهاز والتوقيع الرقمي.
+     *  يُمرَّر إلى جوالي كـ customerIdentifier (في وضع الدافع) */
+    val phoneNumber: String,
     val isSandbox: Boolean = true,
     /** Feature Toggle: وضع الشبكة (PUBLIC_INTERNET أو PRIVATE_APN) */
     val networkMode: NetworkMode = NetworkMode.PUBLIC_INTERNET,
@@ -428,13 +469,15 @@ data class AtheerSdkConfig(
 /**
  * Builder لتهيئة Atheer SDK بأسلوب Kotlin DSL.
  *
+ * مثال في بيئة التطبيق الموحد:
  * ```kotlin
  * AtheerSdk.init {
  *     context = applicationContext
- *     merchantId = "MERCHANT_001"
+ *     merchantId = "711222333"   // رقم هاتف المستخدم (عميل أو تاجر)
  *     apiKey = "YOUR_API_KEY"
- *     isSandbox = true
- *     networkMode = NetworkMode.PRIVATE_APN  // أو PUBLIC_INTERNET (افتراضي)
+ *     phoneNumber = "711222333" // رقم الهاتف — المعرف الوحيد
+ *     isSandbox = false
+ *     networkMode = NetworkMode.PUBLIC_INTERNET
  * }
  * ```
  */
@@ -442,22 +485,30 @@ class AtheerSdkBuilder {
     lateinit var context: Context
     lateinit var merchantId: String
     lateinit var apiKey: String
+    /** رقم الهاتف — المعرف الفريد الوحيد في بيئة Unified App.
+     *  يُستخدم تلقائياً كـ deviceId في enrollDevice() و preparePayment().
+     *  يجب أن يكون رقم الهاتف الفعلي للمستخدم بصيغة دولية أو محلية. */
+    lateinit var phoneNumber: String
     var isSandbox: Boolean = true
     /** Feature Toggle: وضع الشبكة — PUBLIC_INTERNET (افتراضي) أو PRIVATE_APN */
     var networkMode: NetworkMode = NetworkMode.PUBLIC_INTERNET
     var sessionTimeoutMs: Long = 60_000L
     var rttThresholdMs: Long = 50L
     var baseUrl: String? = null
+    @Deprecated("استخدم phoneNumber بدلاً منه لتفعيل APN Fallback")
+    var enableApnFallback: Boolean = false
 
     fun build(): AtheerSdkConfig {
         check(::context.isInitialized) { "context is required" }
         check(::merchantId.isInitialized) { "merchantId is required" }
         check(::apiKey.isInitialized) { "apiKey is required" }
+        check(::phoneNumber.isInitialized) { "phoneNumber is required — في Unified App هو المعرف الوحيد لكل كيان" }
 
         return AtheerSdkConfig(
             context = context.applicationContext,
             merchantId = merchantId,
             apiKey = apiKey,
+            phoneNumber = phoneNumber,
             isSandbox = isSandbox,
             networkMode = networkMode,
             sessionTimeoutMs = sessionTimeoutMs,
