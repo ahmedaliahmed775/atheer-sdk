@@ -12,7 +12,7 @@
 
 ## نظرة عامة
 
-**Atheer SDK** هي مكتبة أندرويد مبنية بلغة Kotlin تمنح التطبيقات القدرة على تحويل هاتف العميل إلى بطاقة دفع افتراضية عبر تقنية **NFC Host Card Emulation (HCE)**. تعمل المكتبة ضمن منظومة أثير المتكاملة مع [Atheer Switch Backend](../atheer-switch-backend/README.md).
+**Atheer SDK** هي مكتبة أندرويد مبنية بلغة Kotlin تمنح التطبيقات القدرة على تحويل هاتف العميل إلى بطاقة دفع افتراضية عبر تقنية **NFC Host Card Emulation (HCE)**. تعمل المكتبة ضمن منظومة أثير المتكاملة مع [Atheer Switch Backend](https://github.com/ahmedaliahmed775/atheer-switch-backend).
 
 ### المبادئ المعمارية
 
