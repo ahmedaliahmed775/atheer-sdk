@@ -43,8 +43,8 @@ class AtheerSdk private constructor(
 
     companion object {
         private const val TAG = "AtheerSdk"
-        private const val PRODUCTION_URL = "http://206.189.137.59:3000"
-        private const val SANDBOX_URL = "http://206.189.137.59:3000"
+        private const val PRODUCTION_URL = "http://206.189.137.59:4000"
+        private const val SANDBOX_URL = "http://10.0.2.2:4000" // Android Emulator → localhost
         private const val CHARGE_PATH = "/api/v1/payments/process"
         private const val ENROLL_PATH = "/api/v1/devices/enroll"
 
@@ -81,7 +81,7 @@ class AtheerSdk private constructor(
     }
 
     private val keystoreManager = AtheerKeystoreManager(context)
-    private val networkRouter = AtheerNetworkRouter(context)
+    private val networkRouter = AtheerNetworkRouter(context, isSandbox = isSandbox)
     private val database = AtheerDatabase.getInstance(context)
     private val sdkScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 

@@ -35,7 +35,8 @@ import java.util.concurrent.TimeUnit
  */
 internal class AtheerNetworkRouter(
     private val context: Context,
-    private val networkMode: NetworkMode = NetworkMode.PUBLIC_INTERNET
+    private val networkMode: NetworkMode = NetworkMode.PUBLIC_INTERNET,
+    private val isSandbox: Boolean = true
 ) {
 
     /**
@@ -57,36 +58,46 @@ internal class AtheerNetworkRouter(
     }
 
     /**
-     * Certificate Pinning — مفعّل لحماية الاتصال من هجمات MITM.
+     * Certificate Pinning — مفعّل فقط في وضع الإنتاج لحماية الاتصال من هجمات MITM.
      * يثبّت شهادتين (Primary + Backup) لضمان استمرارية الخدمة عند تجديد الشهادة.
      *
      * ⚠️ يجب تحديث هذه القيم عند تجديد شهادات الخادم.
      *    للحصول على الـ hash:
      *    $ openssl s_client -connect api.atheer.com:443 | openssl x509 -pubkey -noout | \
      *      openssl pkey -pubin -outform der | openssl dgst -sha256 -binary | base64
+     *
+     * ⚠️ في وضع Sandbox: يتم تعطيل Certificate Pinning للسماح بالاتصال بخوادم التطوير.
      */
     private val certificatePinner = CertificatePinner.Builder()
-        .add(BASE_DOMAIN, "sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")   // Primary
-        .add(BASE_DOMAIN, "sha256/BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=")   // Backup
+        .add(BASE_DOMAIN, "sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")   // Primary — استبدل بالقيمة الحقيقية
+        .add(BASE_DOMAIN, "sha256/BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=")   // Backup  — استبدل بالقيمة الحقيقية
         .add(SANDBOX_DOMAIN, "sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
         .add(SANDBOX_DOMAIN, "sha256/BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=")
         .build()
 
     /**
-     * عميل HTTP للإنترنت العام — مع Certificate Pinning + TLS 1.2/1.3.
+     * عميل HTTP — في وضع Sandbox: بدون Certificate Pinning / TLS enforcement.
+     * في وضع الإنتاج: مع Certificate Pinning + TLS 1.2/1.3.
      */
     private val publicClient: OkHttpClient by lazy {
-        val tlsSpec = ConnectionSpec.Builder(ConnectionSpec.MODERN_TLS)
-            .tlsVersions(TlsVersion.TLS_1_2, TlsVersion.TLS_1_3)
-            .build()
-
-        OkHttpClient.Builder()
-            .certificatePinner(certificatePinner)
-            .connectionSpecs(listOf(tlsSpec))
+        val builder = OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS)
             .writeTimeout(30, TimeUnit.SECONDS)
-            .build()
+
+        if (!isSandbox) {
+            // وضع الإنتاج: تفعيل Certificate Pinning و TLS
+            val tlsSpec = ConnectionSpec.Builder(ConnectionSpec.MODERN_TLS)
+                .tlsVersions(TlsVersion.TLS_1_2, TlsVersion.TLS_1_3)
+                .build()
+            builder.certificatePinner(certificatePinner)
+            builder.connectionSpecs(listOf(tlsSpec))
+        } else {
+            // وضع التطوير: السماح بـ HTTP cleartext
+            builder.connectionSpecs(listOf(ConnectionSpec.CLEARTEXT, ConnectionSpec.MODERN_TLS))
+        }
+
+        builder.build()
     }
 
     private val connectivityManager =
