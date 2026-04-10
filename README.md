@@ -47,7 +47,6 @@
 | 🔐 **أمان من الدرجة البنكية** | HMAC-SHA256 · Android Keystore · Certificate Pinning |
 | 🔑 **مفاتيح ديناميكية (LUK)** | مفتاح فريد لكل معاملة — لا يمكن إعادة استخدامه أبداً |
 | 👆 **مصادقة حيوية** | حماية كل عملية ببصمة الإصبع أو التعرف على الوجه |
-| 📡 **دعم العمل دون اتصال** | تنفيذ المعاملات offline ومزامنتها تلقائياً عند عودة الاتصال |
 | 🌐 **دعم APN الخاص** | اتصال عبر نفق خلوي مشفر (Zero-Rating) مع شركات الاتصالات |
 | 🛡️ **كشف Root تلقائي** | رفض الأجهزة المخترقة فوراً عند التهيئة |
 | 🗄️ **قاعدة بيانات مشفرة** | تخزين المعاملات بتشفير SQLCipher (AES-256) |
@@ -85,7 +84,7 @@ com.atheer.sdk/
 ├── network/
 │   ├── AtheerNetworkRouter.kt       — موجه الشبكة (OkHttp + TLS 1.3 + Pinning)
 │   ├── AtheerCellularRouter.kt      — موجه شبكة APN الخاص
-│   └── AtheerSyncWorker.kt          — عامل المزامنة في الخلفية (WorkManager)
+│   └── AtheerSyncWorker.kt          — عامل المزامنة في الخلفية (WorkManager) هذه الخدمه متوقفه ومحذوفه تماما
 ├── database/
 │   ├── AtheerDatabase.kt            — قاعدة بيانات مشفرة (SQLCipher)
 │   ├── TransactionDao.kt            — واجهة وصول البيانات
