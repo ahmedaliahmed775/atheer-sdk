@@ -54,6 +54,7 @@ internal class AtheerNetworkRouter(
         private const val BASE_DOMAIN = "api.atheer.com"
         private const val SANDBOX_DOMAIN = "sandbox.atheer.com"
         private const val APN_NETWORK_TIMEOUT_MS = 10_000L
+        private const val SDK_VERSION = "1.0.0"
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
     }
 
@@ -204,6 +205,9 @@ internal class AtheerNetworkRouter(
     ): String = withContext(Dispatchers.IO) {
         val requestBuilder = Request.Builder().url(urlString)
         requestBuilder.addHeader("Accept", "application/json")
+        requestBuilder.addHeader("x-atheer-sdk-version", SDK_VERSION)
+        requestBuilder.addHeader("x-atheer-platform", "android")
+        requestBuilder.addHeader("x-atheer-os-version", android.os.Build.VERSION.RELEASE)
         accessToken?.let { requestBuilder.addHeader("Authorization", "Bearer $it") }
         merchantApiKey?.let { requestBuilder.addHeader("x-atheer-api-key", it) }
 

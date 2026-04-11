@@ -6,9 +6,9 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import net.sqlcipher.database.SupportFactory
-import com.atheer.sdk.security.AtheerKeystoreManager
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import java.security.SecureRandom
 
 /**
  * ## AtheerDatabase
@@ -16,7 +16,7 @@ import androidx.security.crypto.MasterKey
  */
 @Database(
     entities = [TransactionEntity::class],
-    version = 3, // تم التحديث للإصدار 3 لدعم هيكل البيانات المبسط الجديد
+    version = 3,
     exportSchema = false
 )
 abstract class AtheerDatabase : RoomDatabase() {
@@ -42,9 +42,7 @@ abstract class AtheerDatabase : RoomDatabase() {
         }
 
         private fun buildDatabase(context: Context): AtheerDatabase {
-            // تمرير الـ context هنا لحل الخطأ الأول
-            val keystoreManager = AtheerKeystoreManager(context)
-            val passphrase = getOrCreateDatabasePassphrase(context, keystoreManager)
+            val passphrase = getOrCreateDatabasePassphrase(context)
             val factory = SupportFactory(passphrase)
 
             return Room.databaseBuilder(
@@ -57,8 +55,11 @@ abstract class AtheerDatabase : RoomDatabase() {
                 .build()
         }
 
-        private fun getOrCreateDatabasePassphrase(context: Context, keystore: AtheerKeystoreManager): ByteArray {
-            // استخدام التشفير المدمج والآمن لحفظ كلمة مرور قاعدة البيانات
+        /**
+         * توليد أو استرجاع كلمة مرور قاعدة البيانات من EncryptedSharedPreferences.
+         * لا تعتمد على AtheerKeystoreManager لفصل المسؤوليات.
+         */
+        private fun getOrCreateDatabasePassphrase(context: Context): ByteArray {
             val masterKey = MasterKey.Builder(context)
                 .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
                 .build()
@@ -74,10 +75,13 @@ abstract class AtheerDatabase : RoomDatabase() {
             var passphrase = encryptedPrefs.getString(KEY_PASSPHRASE, null)
 
             if (passphrase == null) {
-                passphrase = keystore.generateNonce()
+                // توليد nonce عشوائي آمن بدون اعتماد خارجي
+                val nonceBytes = ByteArray(32)
+                SecureRandom().nextBytes(nonceBytes)
+                passphrase = nonceBytes.joinToString("") { "%02x".format(it) }
                 encryptedPrefs.edit().putString(KEY_PASSPHRASE, passphrase).apply()
             }
-            
+
             return passphrase.toByteArray(Charsets.UTF_8)
         }
     }

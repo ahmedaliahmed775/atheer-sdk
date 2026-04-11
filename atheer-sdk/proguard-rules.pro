@@ -29,3 +29,29 @@
 -keep class com.atheer.sdk.AtheerSdk {
     public *;
 }
+
+# ==========================================
+# 5. حماية واجهة الـ SDK العامة الإضافية
+# ==========================================
+-keep class com.atheer.sdk.AtheerSdkConfig { *; }
+-keep class com.atheer.sdk.AtheerSdkBuilder { *; }
+-keep class com.atheer.sdk.SessionState { *; }
+-keep enum com.atheer.sdk.SessionState { *; }
+
+# ==========================================
+# 6. SQLCipher — مطلوب لمنع خطأ R8 في الإنتاج
+# ==========================================
+-keep class net.sqlcipher.** { *; }
+-keep class net.sqlcipher.database.** { *; }
+
+# ==========================================
+# 7. حماية AtheerError المختومة
+# ==========================================
+-keep class com.atheer.sdk.model.AtheerError { *; }
+-keep class com.atheer.sdk.model.AtheerError$* { *; }
+
+# ==========================================
+# 8. RootBeer — كشف الـ Root
+# ==========================================
+-keep class com.scottyab.rootbeer.** { *; }
+-dontwarn com.scottyab.rootbeer.**
