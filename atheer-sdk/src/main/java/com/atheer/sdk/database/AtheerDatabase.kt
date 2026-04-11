@@ -32,6 +32,8 @@ abstract class AtheerDatabase : RoomDatabase() {
         @Volatile
         private var INSTANCE: AtheerDatabase? = null
 
+        private val secureRandom = SecureRandom()
+
         fun getInstance(context: Context): AtheerDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: buildDatabase(context).also { instance ->
@@ -75,9 +77,9 @@ abstract class AtheerDatabase : RoomDatabase() {
             var passphrase = encryptedPrefs.getString(KEY_PASSPHRASE, null)
 
             if (passphrase == null) {
-                // توليد nonce عشوائي آمن بدون اعتماد خارجي
+                // توليد nonce عشوائي آمن (32 بايت = 256 bit)
                 val nonceBytes = ByteArray(32)
-                SecureRandom().nextBytes(nonceBytes)
+                secureRandom.nextBytes(nonceBytes)
                 passphrase = nonceBytes.joinToString("") { "%02x".format(it) }
                 encryptedPrefs.edit().putString(KEY_PASSPHRASE, passphrase).apply()
             }
