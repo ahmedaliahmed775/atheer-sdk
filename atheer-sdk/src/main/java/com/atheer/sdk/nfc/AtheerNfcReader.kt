@@ -10,8 +10,10 @@ import com.atheer.sdk.model.ChargeRequest
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.Closeable
 import java.nio.charset.StandardCharsets
 
 /**
@@ -30,7 +32,7 @@ internal class AtheerNfcReader(
     private val transactionType: String = "P2M",
     private val transactionCallback: (ChargeRequest) -> Unit,
     private val errorCallback: (Exception) -> Unit
-) : NfcAdapter.ReaderCallback {
+) : NfcAdapter.ReaderCallback, Closeable {
 
     companion object {
         private const val TAG = "AtheerNfcReader"
@@ -116,4 +118,12 @@ internal class AtheerNfcReader(
 
     private fun isResponseOk(response: ByteArray) = 
         response.size >= 2 && response[response.size - 2] == STATUS_OK[0] && response[response.size - 1] == STATUS_OK[1]
+
+    /**
+     * إلغاء جميع الـ coroutines وتحرير الموارد.
+     * يجب استدعاؤها عند إيقاف قراءة NFC لمنع تسريب الذاكرة.
+     */
+    override fun close() {
+        readerScope.cancel()
+    }
 }

@@ -15,11 +15,17 @@ import android.os.SystemClock
  */
 internal object AtheerPaymentSession {
 
-    private const val SESSION_TIMEOUT_MS = 60_000L // 60 ثانية
+    internal const val SESSION_TIMEOUT_MS = 60_000L // 60 ثانية
 
     @Volatile private var armedTimestamp: Long = 0L
     @Volatile private var signature: String? = null
     @Volatile private var payload: String? = null
+
+    /**
+     * Callback يُستدعى عند استهلاك الجلسة بنجاح عبر NFC.
+     * يُستخدَم لتحديث SessionState في AtheerSdk.
+     */
+    @Volatile var onSessionConsumed: (() -> Unit)? = null
 
     /**
      * تفعيل الجلسة وتخزين التوقيع والحمولة.
@@ -51,18 +57,9 @@ internal object AtheerPaymentSession {
         if (!isSessionArmed()) return null
         val result = payload!! to signature!!
         clearSession()
+        onSessionConsumed?.invoke()
         return result
     }
-
-    /**
-     * الحصول على حمولة الجلسة الحالية (DeviceID|Counter|Timestamp).
-     */
-    fun getPayload(): String? = if (isSessionArmed()) payload else null
-
-    /**
-     * الحصول على التوقيع الرقمي للجلسة الحالية.
-     */
-    fun getSignature(): String? = if (isSessionArmed()) signature else null
 
     /**
      * مسح الجلسة فوراً (يستدعى بعد نجاح التوصيل عبر NFC).
