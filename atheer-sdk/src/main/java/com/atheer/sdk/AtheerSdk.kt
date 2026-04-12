@@ -37,6 +37,25 @@ class AtheerSdkConfig {
     var enableApnFallback: Boolean = false
     /** حجب الأجهزة المكسورة الحماية (Rooted). false = تحذير فقط */
     var blockRootedDevices: Boolean = false
+    /**
+     * قائمة بـ SHA-256 hashes لشهادات الخادم (Certificate Pinning).
+     * مطلوبة في وضع الإنتاج لحماية الاتصال من هجمات MITM.
+     * تُجاهَل تلقائياً في وضع Sandbox.
+     *
+     * مثال:
+     * ```kotlin
+     * certificatePins = listOf(
+     *     "sha256/AAABBBCCC...=",   // Primary certificate hash
+     *     "sha256/DDDEEEFFF...="    // Backup certificate hash
+     * )
+     * ```
+     * للحصول على الـ hash:
+     * ```shell
+     * openssl s_client -connect api.atheer.com:443 | openssl x509 -pubkey -noout | \
+     *   openssl pkey -pubin -outform der | openssl dgst -sha256 -binary | base64
+     * ```
+     */
+    var certificatePins: List<String> = emptyList()
 }
 
 /**
@@ -63,7 +82,8 @@ class AtheerSdk private constructor(
     val phoneNumber: String,
     private val isSandbox: Boolean,
     private val enableApnFallback: Boolean,
-    private val blockRootedDevices: Boolean
+    private val blockRootedDevices: Boolean,
+    private val certificatePins: List<String>
 ) {
     private val finalUrl: String = if (isSandbox) SANDBOX_URL else PRODUCTION_URL
     private val gson = Gson()
@@ -134,7 +154,8 @@ class AtheerSdk private constructor(
                             phoneNumber = config.phoneNumber,
                             isSandbox = config.isSandbox,
                             enableApnFallback = config.enableApnFallback,
-                            blockRootedDevices = config.blockRootedDevices
+                            blockRootedDevices = config.blockRootedDevices,
+                            certificatePins = config.certificatePins
                         )
                         Log.i(TAG, "تمت تهيئة Atheer SDK بنجاح (Unified ID: ${config.phoneNumber}).")
                     }
@@ -147,7 +168,7 @@ class AtheerSdk private constructor(
     }
 
     private val keystoreManager = AtheerKeystoreManager(context)
-    private val networkRouter = AtheerNetworkRouter(context, isSandbox = isSandbox)
+    private val networkRouter = AtheerNetworkRouter(context, isSandbox = isSandbox, certificatePins = certificatePins)
     private val database = AtheerDatabase.getInstance(context)
     private val sdkScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 

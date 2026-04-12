@@ -22,8 +22,10 @@ data class AtheerReadinessReport(
     val isDeviceRooted: Boolean
 ) {
     /**
-     * الجهاز جاهز للدفع إذا توفرت جميع المتطلبات الأساسية.
+     * الجهاز جاهز للدفع إذا توفرت جميع المتطلبات الأساسية،
+     * بما فيها توفر المصادقة الحيوية القوية.
      */
     val isReadyForPayment: Boolean
-        get() = isNfcSupported && isNfcEnabled && isHceSupported && isDeviceEnrolled && !isDeviceRooted
+        get() = isNfcSupported && isNfcEnabled && isHceSupported &&
+                isBiometricAvailable && isDeviceEnrolled && !isDeviceRooted
 }
