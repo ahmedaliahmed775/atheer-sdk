@@ -9,10 +9,8 @@ import androidx.security.crypto.MasterKey
 import android.util.Base64
 import android.util.Log
 import java.security.KeyStore
-import java.security.SecureRandom
 import javax.crypto.KeyGenerator
 import javax.crypto.Mac
-import javax.crypto.SecretKey
 import javax.crypto.spec.SecretKeySpec
 
 /**
@@ -174,12 +172,4 @@ internal class AtheerKeystoreManager(private val context: Context) {
         return Base64.encodeToString(signatureBytes, Base64.NO_WRAP)
     }
 
-    /**
-     * توليد قيمة عشوائية (Nonce) تستخدم لمرة واحدة.
-     */
-    fun generateNonce(): String {
-        val nonceBytes = ByteArray(16)
-        SecureRandom().nextBytes(nonceBytes)
-        return nonceBytes.joinToString("") { "%02x".format(it) }
-    }
 }

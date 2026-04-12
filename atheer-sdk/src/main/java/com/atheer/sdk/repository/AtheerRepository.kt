@@ -14,7 +14,7 @@ import com.atheer.sdk.model.ChargeResponse
  * - استبدال مصادر البيانات دون تغيير منطق الأعمال (Separation of Concerns).
  * - التوافق مع مبدأ Dependency Inversion (SOLID).
  */
-interface AtheerRepository {
+internal interface AtheerRepository {
 
     /**
      * تسجيل الجهاز مع الخادم واستلام [deviceSeed] وتخزينه بأمان في Keystore.

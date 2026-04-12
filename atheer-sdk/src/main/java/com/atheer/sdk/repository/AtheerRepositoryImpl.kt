@@ -81,7 +81,12 @@ internal class AtheerRepositoryImpl(
                 "$baseUrl$CHARGE_PATH", body, accessToken, apiKey
             )
 
+            if (responseJson.isBlank()) {
+                throw IllegalStateException("استجابة فارغة من السيرفر")
+            }
+
             gson.fromJson(responseJson, ChargeResponse::class.java)
+                ?: throw IllegalStateException("فشل تحليل رد عملية الدفع")
         }
     }
 

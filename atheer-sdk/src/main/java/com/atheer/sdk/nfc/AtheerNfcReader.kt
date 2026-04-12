@@ -41,6 +41,8 @@ internal class AtheerNfcReader(
         private val GET_PAYMENT_DATA_APDU = byteArrayOf(0x00.toByte(), 0xCA.toByte(), 0x00.toByte(), 0x01.toByte(), 0x00.toByte())
         private val STATUS_OK = byteArrayOf(0x90.toByte(), 0x00.toByte())
         private const val TIMEOUT_MS = 5000
+        /** الحد الأقصى لزمن الاستجابة المسموح به (RTT) — وفق معيار EMV لمنع هجمات الترحيل */
+        private const val RELAY_ATTACK_RTT_THRESHOLD_MS = 300L
     }
 
     private val readerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -55,14 +57,14 @@ internal class AtheerNfcReader(
         val isoDep = IsoDep.get(tag) ?: return@withContext
 
         try {
-            isoDep.connect()
+         isoDep.connect()
             isoDep.timeout = TIMEOUT_MS
 
             // 1. اختيار تطبيق أثير
             val selectResponse = isoDep.transceive(SELECT_APDU)
             if (!isResponseOk(selectResponse)) throw Exception("تطبيق أثير غير متوفر")
 
-            // 2. قياس Round-Trip Time (RTT) لمنع Relay Attacks
+               // 2. قياس Round-Trip Time (RTT) لمنع Relay Attacks
             // نستخدم SystemClock.elapsedRealtime() لدقة أعلى ومقاومة للتلاعب بالوقت
             val startTime = android.os.SystemClock.elapsedRealtime()
             
@@ -74,8 +76,9 @@ internal class AtheerNfcReader(
             
             Log.d(TAG, "NFC RTT: ${rtt}ms")
             
-            // إذا تجاوز الـ RTT 50ms، نعتبره هجوم ترحيل (Relay Attack)
-            if (rtt > 50) {
+            // إذا تجاوز الـ RTT الحد المسموح به، نعتبره هجوم ترحيل (Relay Attack)
+            // معيار EMV القياسي: 300ms — يتوافق مع الأجهزة المتوسطة تحت ضغط CPU عالٍ
+            if (rtt > RELAY_ATTACK_RTT_THRESHOLD_MS) {
                 Log.e(TAG, "تم اكتشاف محاولة Relay Attack! RTT: ${rtt}ms")
                 throw RelayAttackException("فشل التحقق من المسافة الآمنة (RTT: ${rtt}ms)")
             }

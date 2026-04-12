@@ -26,7 +26,7 @@ class AtheerSdk private constructor(
     private val context: Context,
     private val merchantId: String,
     private val apiKey: String,
-    val phoneNumber: String,
+    internal val phoneNumber: String,
     private val isSandbox: Boolean,
     private val enableApnFallback: Boolean,
     private val blockRootedDevices: Boolean,
@@ -60,7 +60,7 @@ class AtheerSdk private constructor(
 
     companion object {
         private const val TAG = "AtheerSdk"
-        private const val PRODUCTION_URL = "http://206.189.137.59:4000"
+        private const val PRODUCTION_URL = "https://api.atheer.com"
         private const val SANDBOX_URL = "http://10.0.2.2:4000"
         private const val MIN_PAYMENT_INTERVAL_MS = 5_000L   // 5 ثوانٍ بين كل محاولة دفع
         private const val NFC_PAYMENT_TIMESTAMP_MAX_AGE_MS = 120_000L // 2 دقيقة
@@ -76,6 +76,8 @@ class AtheerSdk private constructor(
 
             requireNotNull(config.context) { "يجب تمرير context صحيح للتهيئة" }
             require(config.phoneNumber.isNotBlank()) { "رقم الهاتف إلزامي لعمليات الدفع والتشفير" }
+            require(config.merchantId.isNotBlank()) { "merchantId إلزامي لتحديد هوية التاجر" }
+            require(config.apiKey.isNotBlank()) { "apiKey إلزامي للمصادقة مع الخادم" }
 
             // Root Detection
             val rootBeer = RootBeer(config.context)

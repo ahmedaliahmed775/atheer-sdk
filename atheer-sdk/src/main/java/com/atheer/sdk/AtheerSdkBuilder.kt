@@ -21,6 +21,7 @@ class AtheerSdkBuilder {
     var phoneNumber: String = ""
     var isSandbox: Boolean = true
     var blockRootedDevices: Boolean = false
+    var certificatePins: List<String> = emptyList()
 
     /**
      * التحقق من صحة الإعدادات وبناء [AtheerSdkConfig].
@@ -39,6 +40,7 @@ class AtheerSdkBuilder {
             this.phoneNumber = this@AtheerSdkBuilder.phoneNumber
             this.isSandbox = this@AtheerSdkBuilder.isSandbox
             this.blockRootedDevices = this@AtheerSdkBuilder.blockRootedDevices
+            this.certificatePins = this@AtheerSdkBuilder.certificatePins
         }
     }
 }

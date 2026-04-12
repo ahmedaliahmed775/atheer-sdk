@@ -33,11 +33,14 @@ internal object AtheerFeedbackUtils {
         }
 
         // 2. الصوت (Audio Feedback)
+        var toneGen: ToneGenerator? = null
         try {
-            val toneGen = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 100)
+            toneGen = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 100)
             toneGen.startTone(ToneGenerator.TONE_PROP_ACK, 200)
         } catch (e: Exception) {
             // تجاهل أخطاء الصوت في حالة كتم الجهاز
+        } finally {
+            toneGen?.release()
         }
     }
 }
