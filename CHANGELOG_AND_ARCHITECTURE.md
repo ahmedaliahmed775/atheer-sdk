@@ -21,6 +21,11 @@
 
 ## ١. ملخص التحسينات الأخيرة
 
+### 🚀 تحويل المكتبة إلى Headless SDK خفيفة (Ultra-light)
+- **إزالة واجهات المستخدم (UI):** تم إزالة `AtheerPaymentSettingsActivity` بالكامل لتفويض تطبيق المحفظة المضيف بمهمة إدارة الإعدادات وعرض واجهات التفاعل، مما يجعل الـ SDK مكتبة Headless بالكامل.
+- **إزالة التخزين المحلي (Local Database):** تم حذف كافة المكونات المتعلقة بـ (Room و SQLCipher). أصبحت الـ SDK تُمرر بيانات المعاملات (Passthrough) للـ Backend وتُعيد الرد مباشرة دون الاحتفاظ بسجل محلي.
+- **إزالة موديلات المصادقة (Auth Models):** إزلة كافة كلاسات `Login` و `Signup` باعتبار أن المصادقة تتم بشكل كامل في تطبيق المحفظة المضيف.
+
 ### 🗑️ حذف الكود المهجور (Dead Code Removal)
 
 | الملف المحذوف | السبب |
@@ -243,18 +248,17 @@ requestBuilder.addHeader("x-atheer-os-version", Build.VERSION.RELEASE)
 
 ### ✅ اكتمال المشروع
 
-#### أ. حفظ المعاملات تلقائياً
+#### أ. تمرير المعاملات المباشر (Passthrough)
 
 ```kotlin
-// النسخة القديمة — قاعدة البيانات موجودة لكن لا تُستخدم ❌
-// AtheerDatabase كانت تُبنى لكن charge() لم تكتب فيها أبداً
-
-// النسخة الجديدة — حفظ تلقائي عند نجاح charge() ✅
-sdkScope.launch {
-    database.transactionDao().insertTransaction(
-        request.toTransactionEntity(transactionId)
-    )
-}
+// النسخة الجديدة — الرد يُمرر مباشرة للمحفظة لتخزينه ✅
+// تمت إزالة قاعدة البيات المحلية AtheerDatabase لتصبح الـ SDK خفيفة
+val response = ChargeResponse(
+    transactionId = transactionId,
+    status = "ACCEPTED",
+    message = "نجاح العملية"
+)
+return response
 ```
 
 #### ب. `checkReadiness()` — فحص جاهزية الجهاز
@@ -282,7 +286,7 @@ if (!report.isReadyForPayment) {
 | **Timestamp Validation** | لا يوجد | رفض > 120 ثانية أو من المستقبل |
 | **بناء طلب HTTP** | 12 سطراً يدوياً (JSONObject) | سطر واحد (Gson) |
 | **تسجيل الجهاز** | طلب شبكة في كل مرة | يتخطى إذا مسجّل مسبقاً |
-| **حفظ المعاملات** | DB موجودة لكن لا تُكتب | تُحفظ تلقائياً عند نجاح `charge()` |
+| **حفظ المعاملات** | DB موجودة لكن لا تُكتب | مُمررة مباشرة للمحفظة (Headless) للتخزين |
 | **فحص الجاهزية** | غير موجود | `checkReadiness()` شامل |
 | **تسريب الذاكرة في NFC** | `CoroutineScope` لا يُلغى | `Closeable.close()` يُلغي الـ scope |
 | **Thread-Safety للجلسة** | Getters منفصلة (Race Condition) | `consumeSession()` ذرية |

@@ -58,7 +58,6 @@ The SDK implements a **Zero-Trust Dynamic Key Derivation** protocol where every 
 | 📡 **Private APN** | Zero-rating cellular tunnel for Atheer transactions |
 | 🛡️ **Root Detection** | Blocks or warns on rooted/jailbroken devices |
 | ⏱️ **Relay Attack Protection** | RTT-based proximity check (< 50ms) |
-| 💾 **Encrypted Local DB** | SQLCipher-encrypted offline transaction log |
 | 📌 **Certificate Pinning** | MITM protection in production mode |
 
 ---
@@ -72,7 +71,6 @@ com.atheer.sdk
 ├── AtheerSdkBuilder             ← Optional builder for early config validation
 ├── AtheerSdkConfig              ← DSL configuration (includes certificatePins)
 ├── SessionState                 ← Enum: IDLE / ARMED / EXPIRED
-├── AtheerPaymentSettingsActivity← Activity to set app as default payment app
 │
 ├── repository/
 │   ├── AtheerRepository         ← Data access interface (network + DB + keystore)
@@ -92,11 +90,6 @@ com.atheer.sdk
 ├── network/
 │   └── AtheerNetworkRouter      ← HTTP client with dynamic cert pinning + APN fallback (internal)
 │
-├── database/
-│   ├── AtheerDatabase           ← Room + SQLCipher encrypted DB (with explicit migrations)
-│   ├── TransactionDao           ← DAO for transaction CRUD
-│   └── TransactionEntity        ← Room entity for stored transactions
-│
 └── model/
     ├── AtheerError              ← Sealed error hierarchy
     ├── AtheerReadinessReport    ← Device capability snapshot
@@ -104,8 +97,6 @@ com.atheer.sdk
     ├── ChargeRequest            ← Payment request payload
     ├── ChargeResponse           ← Payment response from backend
     ├── EnrollResponse           ← Device enrollment response
-    ├── LoginRequest/Response    ← Auth models
-    ├── SignupRequest/Response   ← Registration models
     ├── BalanceResponse          ← Wallet balance
     └── HistoryResponse          ← Transaction history
 
@@ -186,8 +177,6 @@ preparePayment() called
 | `deviceSeed` | `EncryptedSharedPreferences` (AES-256-GCM via Android Keystore) |
 | Monotonic counter | `EncryptedSharedPreferences` (AES-256-GCM via Android Keystore) |
 | Master Seed (fallback) | Android Keystore (hardware-backed TEE/StrongBox AES-256) |
-| DB passphrase | `EncryptedSharedPreferences` (AES-256-GCM via Android Keystore) |
-| Transaction log | SQLCipher-encrypted Room database (AES-256 CBC) |
 
 ### Network Security
 
@@ -595,7 +584,7 @@ Throws `IllegalArgumentException` on validation failure.
 suspend fun charge(request: ChargeRequest, accessToken: String): Result<ChargeResponse>
 ```
 
-Sends the payment request to the backend. On success, automatically persists the transaction to the local encrypted database. Returns `Result.failure` if no internet connection is available.
+Sends the payment request to the backend. Returns `Result.failure` if no internet connection is available. As a headless SDK, transactions are not saved locally—the host application should store them from `ChargeResponse`.
 
 **Endpoint**: `POST /api/v1/payments/process`
 
@@ -734,14 +723,16 @@ The service requires the device to be unlocked (`android:requireDeviceUnlock="tr
 
 ### Setting as Default Payment App
 
-To ensure the HCE service is selected during NFC taps, guide the user to the settings screen:
+To ensure the HCE service is selected during NFC taps, the host application must provide its own settings UI to invoke this intent:
 
 ```kotlin
-val intent = Intent(this, AtheerPaymentSettingsActivity::class.java)
-startActivity(intent)
+val componentName = ComponentName(this, AtheerApduService::class.java)
+val intent = Intent(CardEmulation.ACTION_CHANGE_DEFAULT).apply {
+    putExtra(CardEmulation.EXTRA_CATEGORY, CardEmulation.CATEGORY_PAYMENT)
+    putExtra(CardEmulation.EXTRA_SERVICE_COMPONENT, componentName)
+}
+startActivityForResult(intent, 101)
 ```
-
-This activity lets the user set Atheer as the default NFC payment application.
 
 ---
 
@@ -778,8 +769,6 @@ The SDK ships a `consumer-rules.pro` file that is automatically applied to consu
 | `kotlinx-coroutines-android` | 1.8.1 | Async operations |
 | `androidx.security:security-crypto` | 1.1.0-alpha06 | EncryptedSharedPreferences |
 | `androidx.biometric:biometric` | 1.1.0 | Fingerprint authentication |
-| `androidx.room:room-runtime` | 2.6.1 | Local database ORM |
-| `net.zetetic:android-database-sqlcipher` | 4.5.4 | SQLCipher encryption |
 | `com.squareup.okhttp3:okhttp` | 4.12.0 | HTTP client |
 | `com.google.code.gson:gson` | 2.10.1 | JSON serialization |
 | `com.scottyab:rootbeer-lib` | 0.1.0 | Root detection |

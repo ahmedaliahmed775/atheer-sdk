@@ -28,15 +28,5 @@
                 android:resource="@xml/apduservice" />
         </service>
 
-        <activity
-            android:name=".AtheerPaymentSettingsActivity"
-            android:exported="true"
-            android:label="إعدادات دفع Atheer">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.PAYMENT_SETTINGS" />
-            </intent-filter>
-        </activity>
-
     </application>
 </manifest>

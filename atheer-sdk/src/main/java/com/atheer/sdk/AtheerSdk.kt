@@ -5,7 +5,6 @@ import android.util.Log
 import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
-import com.atheer.sdk.database.AtheerDatabase
 import com.atheer.sdk.model.AtheerReadinessReport
 import com.atheer.sdk.model.ChargeRequest
 import com.atheer.sdk.model.ChargeResponse
@@ -162,7 +161,6 @@ class AtheerSdk private constructor(
 
     private val keystoreManager = AtheerKeystoreManager(context)
     private val networkRouter = AtheerNetworkRouter(context, isSandbox = isSandbox, certificatePins = certificatePins)
-    private val database = AtheerDatabase.getInstance(context)
     private val sdkScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     /**
@@ -173,7 +171,6 @@ class AtheerSdk private constructor(
             context = context,
             networkRouter = networkRouter,
             keystoreManager = keystoreManager,
-            database = database,
             baseUrl = finalUrl,
             gson = gson
         )

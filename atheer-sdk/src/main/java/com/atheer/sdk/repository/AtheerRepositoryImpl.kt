@@ -5,7 +5,6 @@ import android.content.pm.PackageManager
 import android.nfc.NfcAdapter
 import android.util.Log
 import androidx.biometric.BiometricManager
-import com.atheer.sdk.database.AtheerDatabase
 import com.atheer.sdk.model.AtheerReadinessReport
 import com.atheer.sdk.model.ChargeRequest
 import com.atheer.sdk.model.ChargeResponse
@@ -28,7 +27,6 @@ internal class AtheerRepositoryImpl(
     private val context: Context,
     private val networkRouter: AtheerNetworkRouter,
     private val keystoreManager: AtheerKeystoreManager,
-    private val database: AtheerDatabase,
     private val baseUrl: String,
     private val gson: Gson
 ) : AtheerRepository {
@@ -92,15 +90,6 @@ internal class AtheerRepositoryImpl(
                 message = "نجاح العملية"
             )
 
-            // حفظ المعاملة محلياً تلقائياً عند النجاح
-            runCatching {
-                database.transactionDao().insertTransaction(
-                    request.toTransactionEntity(transactionId)
-                )
-            }.onFailure { e ->
-                Log.w(TAG, "فشل حفظ المعاملة محلياً: ${e.message}")
-            }
-
             response
         }
     }
@@ -124,21 +113,3 @@ internal class AtheerRepositoryImpl(
     }
 }
 
-// ==========================================
-// Extension: ChargeRequest → TransactionEntity
-// ==========================================
-
-private fun ChargeRequest.toTransactionEntity(transactionId: String) =
-    com.atheer.sdk.database.TransactionEntity(
-        transactionId = transactionId,
-        amount = amount,
-        currency = currency,
-        receiverAccount = receiverAccount,
-        transactionType = transactionType,
-        timestamp = timestamp,
-        deviceId = deviceId,
-        counter = counter,
-        authMethod = authMethod,
-        signature = signature,
-        isSynced = true
-    )
