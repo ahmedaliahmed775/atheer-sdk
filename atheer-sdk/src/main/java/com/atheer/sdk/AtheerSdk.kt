@@ -19,53 +19,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /**
- * ## AtheerSdkConfig
- * إعدادات التهيئة الموحدة للمكتبة باستخدام DSL
- */
-class AtheerSdkConfig {
-    var context: Context? = null
-    var merchantId: String = ""
-    var apiKey: String = ""
-    var phoneNumber: String = ""
-    var isSandbox: Boolean = true
-    var enableApnFallback: Boolean = false
-    /** حجب الأجهزة المكسورة الحماية (Rooted). false = تحذير فقط */
-    var blockRootedDevices: Boolean = false
-    /**
-     * قائمة بـ SHA-256 hashes لشهادات الخادم (Certificate Pinning).
-     * مطلوبة في وضع الإنتاج لحماية الاتصال من هجمات MITM.
-     * تُجاهَل تلقائياً في وضع Sandbox.
-     *
-     * مثال:
-     * ```kotlin
-     * certificatePins = listOf(
-     *     "sha256/AAABBBCCC...=",   // Primary certificate hash
-     *     "sha256/DDDEEEFFF...="    // Backup certificate hash
-     * )
-     * ```
-     * للحصول على الـ hash:
-     * ```shell
-     * openssl s_client -connect api.atheer.com:443 | openssl x509 -pubkey -noout | \
-     *   openssl pkey -pubin -outform der | openssl dgst -sha256 -binary | base64
-     * ```
-     */
-    var certificatePins: List<String> = emptyList()
-}
-
-/**
- * ## SessionState
- * حالة جلسة الدفع — قابلة للمراقبة عبر [AtheerSdk.sessionState].
- */
-enum class SessionState {
-    /** الجلسة غير نشطة */
-    IDLE,
-    /** الجلسة مسلحة — جاهزة للنقر عبر NFC */
-    ARMED,
-    /** انتهت صلاحية الجلسة (60 ثانية) */
-    EXPIRED
-}
-
-/**
  * ## AtheerSdk
  * الواجهة الرئيسية للمكتبة بالاعتماد على الهوية الموحدة (phoneNumber / deviceId).
  */
@@ -157,6 +110,15 @@ class AtheerSdk private constructor(
 
         fun getInstance(): AtheerSdk = instance
             ?: throw IllegalStateException("يجب استدعاء AtheerSdk.init() أولاً.")
+
+        /**
+         * إعادة تعيين الـ SDK وتحرير الموارد.
+         * يجب استدعاؤها عند تسجيل خروج المستخدم أو تبديل الحساب.
+         */
+        fun reset() {
+            instance?.sdkScope?.cancel()
+            instance = null
+        }
     }
 
     private val keystoreManager = AtheerKeystoreManager(context)
@@ -164,9 +126,9 @@ class AtheerSdk private constructor(
     private val sdkScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     /**
-     * مستودع البيانات المركزي — يوفر وصولاً نظيفاً للشبكة وقاعدة البيانات والـ Keystore.
+     * مستودع البيانات المركزي — يوفر وصولاً نظيفاً للشبكة والـ Keystore.
      */
-    val repository: com.atheer.sdk.repository.AtheerRepository =
+    internal val repository: com.atheer.sdk.repository.AtheerRepository =
         com.atheer.sdk.repository.AtheerRepositoryImpl(
             context = context,
             networkRouter = networkRouter,
@@ -329,7 +291,7 @@ class AtheerSdk private constructor(
 
     /**
      * دالة الدفع (Suspended) — تُفوَّض للـ Repository.
-     * تحفظ المعاملة تلقائياً في قاعدة البيانات المحلية عند نجاح العملية.
+     * تُرسِل المعاملة مباشرة للـ Backend وتُعيد النتيجة للمحفظة المضيفة.
      */
     suspend fun charge(request: ChargeRequest, accessToken: String): Result<ChargeResponse> {
         if (!networkRouter.isNetworkAvailable()) {

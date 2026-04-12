@@ -19,7 +19,7 @@ import kotlinx.coroutines.withContext
 /**
  * ## AtheerRepositoryImpl
  * التنفيذ الفعلي لـ [AtheerRepository] — يتحكم في جميع عمليات الوصول للبيانات:
- * الشبكة (Network)، قاعدة البيانات المحلية (Room/SQLCipher)، ومستودع المفاتيح (Keystore).
+ * الشبكة (Network) ومستودع المفاتيح (Keystore).
  *
  * يُنشَأ داخلياً بواسطة [com.atheer.sdk.AtheerSdk] ولا يُكشَف للمستخدمين المباشرين.
  */
@@ -68,7 +68,7 @@ internal class AtheerRepositoryImpl(
     }
 
     /**
-     * إرسال طلب الدفع للخادم وحفظ المعاملة محلياً عند النجاح.
+     * إرسال طلب الدفع للخادم وإعادة النتيجة مباشرة.
      */
     override suspend fun charge(
         request: ChargeRequest,
@@ -80,17 +80,30 @@ internal class AtheerRepositoryImpl(
             val responseJson = networkRouter.executeStandard(
                 "$baseUrl$CHARGE_PATH", body, accessToken, apiKey
             )
+
+            // محاولة تحليل الرد مباشرة كـ ChargeResponse
+            try {
+                val parsed = gson.fromJson(responseJson, ChargeResponse::class.java)
+                if (parsed.transactionId.isNotBlank()) {
+                    return@runCatching parsed
+                }
+            } catch (_: Exception) { /* fallback للتحليل اليدوي */ }
+
+            // Fallback: تحليل يدوي للتوافق مع بنيتَي JSON مختلفتين
             val responseObj = gson.fromJson(responseJson, Map::class.java)
+            val data = responseObj["data"] as? Map<*, *>
             val transactionId = (responseObj["transactionId"]
-                ?: (responseObj["data"] as? Map<*, *>)?.get("transactionId") ?: "").toString()
+                ?: data?.get("transactionId") ?: "").toString()
+            val status = (responseObj["status"]
+                ?: data?.get("status") ?: "ACCEPTED").toString()
+            val message = (responseObj["message"]
+                ?: data?.get("message")).toString()
 
-            val response = ChargeResponse(
+            ChargeResponse(
                 transactionId = transactionId,
-                status = "ACCEPTED",
-                message = "نجاح العملية"
+                status = status,
+                message = message
             )
-
-            response
         }
     }
 
