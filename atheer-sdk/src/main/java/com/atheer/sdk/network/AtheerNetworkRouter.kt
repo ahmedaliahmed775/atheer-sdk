@@ -36,7 +36,8 @@ import java.util.concurrent.TimeUnit
 internal class AtheerNetworkRouter(
     private val context: Context,
     private val networkMode: NetworkMode = NetworkMode.PUBLIC_INTERNET,
-    private val isSandbox: Boolean = true
+    private val isSandbox: Boolean = true,
+    private val certificatePins: List<String> = emptyList()
 ) {
 
     /**
@@ -60,25 +61,35 @@ internal class AtheerNetworkRouter(
 
     /**
      * Certificate Pinning — مفعّل فقط في وضع الإنتاج لحماية الاتصال من هجمات MITM.
-     * يثبّت شهادتين (Primary + Backup) لضمان استمرارية الخدمة عند تجديد الشهادة.
+     * يُبنى ديناميكياً من قائمة [certificatePins] المُمرَّرة عبر [AtheerSdkConfig.certificatePins].
      *
-     * ⚠️ يجب تحديث هذه القيم عند تجديد شهادات الخادم.
-     *    للحصول على الـ hash:
+     * ⚠️ يجب تمرير شهادتين على الأقل (Primary + Backup) لضمان استمرارية الخدمة
+     *    عند تجديد الشهادة. للحصول على الـ hash:
      *    $ openssl s_client -connect api.atheer.com:443 | openssl x509 -pubkey -noout | \
      *      openssl pkey -pubin -outform der | openssl dgst -sha256 -binary | base64
      *
      * ⚠️ في وضع Sandbox: يتم تعطيل Certificate Pinning للسماح بالاتصال بخوادم التطوير.
      */
-    private val certificatePinner = CertificatePinner.Builder()
-        .add(BASE_DOMAIN, "sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")   // Primary — استبدل بالقيمة الحقيقية
-        .add(BASE_DOMAIN, "sha256/BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=")   // Backup  — استبدل بالقيمة الحقيقية
-        .add(SANDBOX_DOMAIN, "sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
-        .add(SANDBOX_DOMAIN, "sha256/BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=")
-        .build()
+    private val certificatePinner: CertificatePinner? by lazy {
+        if (isSandbox || certificatePins.isEmpty()) {
+            if (!isSandbox && certificatePins.isEmpty()) {
+                Log.w(TAG, "⚠️ تحذير أمني: لم يتم تكوين Certificate Pinning في وضع الإنتاج! " +
+                        "يرجى تمرير certificatePins في AtheerSdkConfig.")
+            }
+            null
+        } else {
+            val builder = CertificatePinner.Builder()
+            certificatePins.forEach { pin ->
+                builder.add(BASE_DOMAIN, pin)
+                builder.add(SANDBOX_DOMAIN, pin)
+            }
+            builder.build()
+        }
+    }
 
     /**
      * عميل HTTP — في وضع Sandbox: بدون Certificate Pinning / TLS enforcement.
-     * في وضع الإنتاج: مع Certificate Pinning + TLS 1.2/1.3.
+     * في وضع الإنتاج: مع Certificate Pinning + TLS 1.2/1.3 (إذا تم تكوين الـ pins).
      */
     private val publicClient: OkHttpClient by lazy {
         val builder = OkHttpClient.Builder()
@@ -87,11 +98,11 @@ internal class AtheerNetworkRouter(
             .writeTimeout(30, TimeUnit.SECONDS)
 
         if (!isSandbox) {
-            // وضع الإنتاج: تفعيل Certificate Pinning و TLS
+            // وضع الإنتاج: تفعيل TLS + Certificate Pinning إن توفرت الـ pins
             val tlsSpec = ConnectionSpec.Builder(ConnectionSpec.MODERN_TLS)
                 .tlsVersions(TlsVersion.TLS_1_2, TlsVersion.TLS_1_3)
                 .build()
-            builder.certificatePinner(certificatePinner)
+            certificatePinner?.let { builder.certificatePinner(it) }
             builder.connectionSpecs(listOf(tlsSpec))
         } else {
             // وضع التطوير: السماح بـ HTTP cleartext
@@ -149,14 +160,16 @@ internal class AtheerNetworkRouter(
                 .tlsVersions(TlsVersion.TLS_1_2, TlsVersion.TLS_1_3)
                 .build()
 
-            val client = OkHttpClient.Builder()
+            val clientBuilder = OkHttpClient.Builder()
                 .socketFactory(cellularNetwork.socketFactory)
-                .certificatePinner(certificatePinner)
                 .connectionSpecs(listOf(tlsSpec))
                 .connectTimeout(15, TimeUnit.SECONDS)
                 .readTimeout(30, TimeUnit.SECONDS)
                 .writeTimeout(30, TimeUnit.SECONDS)
-                .build()
+
+            certificatePinner?.let { clientBuilder.certificatePinner(it) }
+
+            val client = clientBuilder.build()
 
             connectivityManager.unregisterNetworkCallback(callback)
             client

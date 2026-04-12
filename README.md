@@ -18,9 +18,14 @@
 - [Overview](#overview)
 - [Architecture](#architecture)
 - [Security Model](#security-model)
+  - [Zero-Trust Dynamic Key Derivation](#zero-trust-dynamic-key-derivation)
+  - [Storage Security](#storage-security)
+  - [Network Security](#network-security)
+  - [API Key Security Best Practices](#api-key-security-best-practices)
 - [Requirements](#requirements)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
+- [AtheerWalletAdapter — Simplified Integration](#atheerwalletadapter--simplified-integration)
 - [API Reference](#api-reference)
   - [Initialization](#1-initialization)
   - [Device Enrollment](#2-device-enrollment)
@@ -63,11 +68,15 @@ The SDK implements a **Zero-Trust Dynamic Key Derivation** protocol where every 
 ```
 com.atheer.sdk
 │
-├── AtheerSdk                    ← Main singleton — all public APIs live here
+├── AtheerSdk                    ← Main singleton — orchestrates payment flows
 ├── AtheerSdkBuilder             ← Optional builder for early config validation
-├── AtheerSdkConfig              ← DSL configuration data class
+├── AtheerSdkConfig              ← DSL configuration (includes certificatePins)
 ├── SessionState                 ← Enum: IDLE / ARMED / EXPIRED
 ├── AtheerPaymentSettingsActivity← Activity to set app as default payment app
+│
+├── repository/
+│   ├── AtheerRepository         ← Data access interface (network + DB + keystore)
+│   └── AtheerRepositoryImpl     ← Concrete implementation (internal)
 │
 ├── hce/
 │   └── AtheerApduService        ← HostApduService — emulates the NFC card
@@ -81,10 +90,10 @@ com.atheer.sdk
 │   └── AtheerPaymentSession     ← Thread-safe armed-session manager (internal)
 │
 ├── network/
-│   └── AtheerNetworkRouter      ← HTTP client with APN/Internet fallback (internal)
+│   └── AtheerNetworkRouter      ← HTTP client with dynamic cert pinning + APN fallback (internal)
 │
 ├── database/
-│   ├── AtheerDatabase           ← Room + SQLCipher encrypted DB
+│   ├── AtheerDatabase           ← Room + SQLCipher encrypted DB (with explicit migrations)
 │   ├── TransactionDao           ← DAO for transaction CRUD
 │   └── TransactionEntity        ← Room entity for stored transactions
 │
@@ -99,6 +108,9 @@ com.atheer.sdk
     ├── SignupRequest/Response   ← Registration models
     ├── BalanceResponse          ← Wallet balance
     └── HistoryResponse          ← Transaction history
+
+com.atheer.wallet.adapter
+└── AtheerWalletAdapter          ← Simplified facade for wallet integrations (Singleton)
 ```
 
 ### Payment Flow
@@ -132,33 +144,83 @@ Customer Device (HCE)                          Merchant Device (SoftPOS)
 
 ### Zero-Trust Dynamic Key Derivation
 
+The SDK implements a **Zero-Trust Dynamic Key Derivation** architecture where no long-lived static key is ever used directly for payment authorization. Every transaction uses a freshly derived one-time key that is mathematically bound to the device identity and a monotonic counter.
+
 ```
-Backend:  deviceSeed = HMAC-SHA256(MASTER_SEED, deviceId)
-                              ↓
-SDK:      LUK        = HMAC-SHA256(deviceSeed, counter)
-                              ↓
-SDK:      cryptogram = HMAC-SHA256(LUK, "phoneNumber|counter|timestamp")
+Backend:  deviceSeed  = HMAC-SHA256(MASTER_SEED, deviceId)
+                               ↓  (transmitted to SDK securely during enrollment)
+SDK:      LUK         = HMAC-SHA256(deviceSeed, counter)
+                               ↓  (derived locally, never leaves the device)
+SDK:      cryptogram  = HMAC-SHA256(LUK, "phoneNumber|counter|timestamp")
+                               ↓  (transmitted to merchant via NFC)
+Backend:  Verification = recompute cryptogram using stored deviceSeed + received counter
 ```
 
-- **Monotonic Counter** — stored in `EncryptedSharedPreferences`, increments with every authentication; never decrements.
-- **One-Time LUK** — Limited-Use Key, derived fresh for each payment session.
-- **60-Second Session Window** — Cryptogram expires after 60 seconds if no NFC tap occurs.
-- **2-Minute NFC Payload Age** — Replayed NFC data older than 120 seconds is rejected.
+#### Why this is secure:
+| Threat | Mitigation |
+|---|---|
+| **Replay attacks** | Monotonic counter — each counter value is valid exactly once; Backend rejects any counter ≤ last accepted |
+| **Token theft** | LUK is derived on-the-fly; it is never stored and changes with every transaction |
+| **MITM attacks** | Certificate Pinning pins the server's public key; any unauthorized CA is rejected |
+| **Compromised device** | `deviceSeed` is stored in `EncryptedSharedPreferences` backed by Android Keystore hardware |
+| **Transaction staleness** | NFC payload timestamp validated — payloads older than 120 seconds are rejected |
+| **Relay attacks** | 60-second session window + RTT proximity check (< 50ms) on the merchant terminal |
+
+#### Session Lifecycle:
+```
+preparePayment() called
+        │
+        ▼ Biometric Success
+  SessionState = ARMED
+  AtheerPaymentSession.arm(payload, cryptogram)
+        │
+        ├─── NFC Tap within 60s ──► SessionState = IDLE (session consumed)
+        │
+        └─── 60s elapsed ─────────► SessionState = EXPIRED (session discarded)
+```
 
 ### Storage Security
 
 | Data | Storage Mechanism |
 |---|---|
-| `deviceSeed` | `EncryptedSharedPreferences` (AES-256-GCM) |
-| Monotonic counter | `EncryptedSharedPreferences` (AES-256-GCM) |
-| Master Seed (fallback) | Android Keystore (hardware-backed AES-256) |
-| Transaction log | SQLCipher encrypted Room database (AES-256 passphrase) |
+| `deviceSeed` | `EncryptedSharedPreferences` (AES-256-GCM via Android Keystore) |
+| Monotonic counter | `EncryptedSharedPreferences` (AES-256-GCM via Android Keystore) |
+| Master Seed (fallback) | Android Keystore (hardware-backed TEE/StrongBox AES-256) |
+| DB passphrase | `EncryptedSharedPreferences` (AES-256-GCM via Android Keystore) |
+| Transaction log | SQLCipher-encrypted Room database (AES-256 CBC) |
 
 ### Network Security
 
-- **Production**: TLS 1.2 / 1.3 + Certificate Pinning (`sha256` of public key for primary + backup certs).
-- **Sandbox**: Cleartext HTTP allowed (localhost / emulator).
-- **Private APN**: Dedicated cellular tunnel bound to Atheer's zero-rated network.
+- **Production**: TLS 1.2 / 1.3 enforced. Certificate Pinning with dynamically configured `sha256` public key hashes (primary + backup). Configured via `AtheerSdkConfig.certificatePins`.
+- **Sandbox**: Cleartext HTTP allowed for local development (localhost / emulator).
+- **Private APN**: Optional dedicated cellular tunnel bound to Atheer's zero-rated network, with fallback to public internet.
+
+### API Key Security Best Practices
+
+> ⚠️ Your `apiKey` and `merchantId` are sensitive credentials. Follow these practices to avoid leaking them:
+
+1. **Never hardcode secrets** in Kotlin/Java source files. Use `BuildConfig` or a secrets manager instead:
+   ```kotlin
+   // In build.gradle.kts:
+   buildConfigField("String", "ATHEER_API_KEY", "\"${System.getenv("ATHEER_API_KEY")}\"")
+   ```
+
+2. **Use environment variables** in CI/CD pipelines rather than committing secrets to version control.
+
+3. **Configure Certificate Pinning** in production — without it, a compromised CA could perform a MITM attack:
+   ```kotlin
+   AtheerSdk.init {
+       isSandbox        = false
+       certificatePins  = listOf(
+           "sha256/<primary-cert-hash>=",   // openssl s_client -connect api.atheer.com:443 ...
+           "sha256/<backup-cert-hash>="     // Always include a backup to avoid outage on rotation
+       )
+   }
+   ```
+
+4. **Enable `blockRootedDevices = true`** in production to prevent the SDK from running on compromised devices.
+
+5. **Rotate `deviceSeed`** by calling `enrollDevice(forceRenew = true)` if you suspect the seed is compromised.
 
 ---
 
@@ -219,12 +281,16 @@ class MyApp : Application() {
         super.onCreate()
 
         AtheerSdk.init {
-            context          = applicationContext
-            merchantId       = "YOUR_MERCHANT_ID"
-            apiKey           = "YOUR_API_KEY"
-            phoneNumber      = "71XXXXXXX"   // User's phone number — acts as device identity
-            isSandbox        = false          // true for development
-            blockRootedDevices = true         // throw SecurityException on rooted devices
+            context            = applicationContext
+            merchantId         = "YOUR_MERCHANT_ID"
+            apiKey             = "YOUR_API_KEY"
+            phoneNumber        = "71XXXXXXX"   // User's phone number — acts as device identity
+            isSandbox          = false          // true for development
+            blockRootedDevices = true           // throw SecurityException on rooted devices
+            certificatePins    = listOf(        // Required in production
+                "sha256/<primary-cert-hash>=",
+                "sha256/<backup-cert-hash>="
+            )
         }
     }
 }
@@ -235,10 +301,11 @@ class MyApp : Application() {
 ```kotlin
 val sdk = AtheerSdk.getInstance()
 
-sdk.enrollDevice(
-    onSuccess = { /* proceed to payment UI */ },
-    onError   = { error -> showError(error) }
-)
+lifecycleScope.launch {
+    sdk.enrollDevice()
+        .onSuccess { /* proceed to payment UI */ }
+        .onFailure { error -> showError(error.message) }
+}
 ```
 
 ### 3. Check device readiness
@@ -249,20 +316,22 @@ val report = sdk.checkReadiness()
 if (report.isReadyForPayment) {
     showPayButton()
 } else {
-    if (!report.isNfcEnabled)        promptEnableNfc()
+    if (!report.isNfcEnabled)         promptEnableNfc()
     if (!report.isBiometricAvailable) promptSetupBiometric()
-    if (!report.isDeviceEnrolled)     sdk.enrollDevice(...)
+    if (!report.isDeviceEnrolled) {
+        lifecycleScope.launch { sdk.enrollDevice() }
+    }
 }
 ```
 
 ### 4. Customer — prepare payment (arm session)
 
 ```kotlin
-sdk.preparePayment(
-    activity  = this,
-    onSuccess = { /* session armed — show "tap to pay" UI */ },
-    onError   = { error -> showError(error) }
-)
+lifecycleScope.launch {
+    sdk.preparePayment(activity = this@PaymentActivity)
+        .onSuccess { /* session armed — show "tap to pay" UI */ }
+        .onFailure { error -> showError(error.message) }
+}
 ```
 
 ### 5. Merchant — process incoming NFC tap
@@ -310,6 +379,90 @@ lifecycleScope.launch {
 
 ---
 
+## AtheerWalletAdapter — Simplified Integration
+
+`AtheerWalletAdapter` is a high-level facade that hides all SDK complexity behind a clean 4-step API.
+It is the **recommended integration path** for wallet app developers.
+
+### Step 1 — Initialize (once in `Application.onCreate`)
+
+```kotlin
+AtheerWalletAdapter.initialize(
+    context            = applicationContext,
+    merchantId         = "YOUR_MERCHANT_ID",
+    apiKey             = "YOUR_API_KEY",
+    phoneNumber        = "71XXXXXXX",
+    isSandbox          = false,
+    blockRootedDevices = true,
+    certificatePins    = listOf(
+        "sha256/<primary-cert-hash>=",
+        "sha256/<backup-cert-hash>="
+    )
+)
+```
+
+### Step 2 — Enroll (once after first install)
+
+```kotlin
+lifecycleScope.launch {
+    AtheerWalletAdapter.enroll()
+        .onSuccess { showPaymentScreen() }
+        .onFailure { showError(it.message) }
+}
+```
+
+### Step 3 — Prepare (before each payment tap)
+
+```kotlin
+lifecycleScope.launch {
+    AtheerWalletAdapter.preparePayment(activity = this@MainActivity)
+        .onSuccess { showTapToPayUI() }
+        .onFailure { showError(it.message) }
+}
+```
+
+### Step 4 — Process (merchant side, after NFC tap)
+
+```kotlin
+lifecycleScope.launch {
+    AtheerWalletAdapter.processPayment(
+        rawNfcData      = receivedNfcPayload,
+        amount          = 5000.0,
+        receiverAccount = "71XXXXXXX",
+        transactionType = "P2M",
+        accessToken     = userAccessToken
+    )
+    .onSuccess  { response -> showSuccess(response.transactionId) }
+    .onFailure  { error    -> showError(error.message) }
+}
+```
+
+### Observe session state via Adapter
+
+```kotlin
+lifecycleScope.launch {
+    AtheerWalletAdapter.sessionState.collect { state ->
+        when (state) {
+            SessionState.ARMED   -> startCountdown(60)
+            SessionState.EXPIRED -> showExpiredMessage()
+            SessionState.IDLE    -> resetPaymentUI()
+        }
+    }
+}
+```
+
+### Check readiness via Adapter
+
+```kotlin
+val report = AtheerWalletAdapter.checkReadiness()
+if (!report.isReadyForPayment) {
+    if (!report.isNfcEnabled)         promptEnableNfc()
+    if (!report.isBiometricAvailable) promptSetupBiometric()
+}
+```
+
+---
+
 ## API Reference
 
 ### 1. Initialization
@@ -327,6 +480,7 @@ Initializes the singleton. Must be called before `getInstance()`. Throws `Securi
 | `isSandbox` | `Boolean` | `true` | `true` = connect to local emulator; `false` = production |
 | `enableApnFallback` | `Boolean` | `false` | Enable fallback to public internet if private APN is unavailable |
 | `blockRootedDevices` | `Boolean` | `false` | Throw `SecurityException` on rooted devices instead of just warning |
+| `certificatePins` | `List<String>` | `emptyList()` | SHA-256 public key hashes for Certificate Pinning. **Required in production.** Ignored in sandbox. |
 
 #### `AtheerSdkBuilder`
 
@@ -347,17 +501,21 @@ val config = AtheerSdkBuilder().apply {
 ### 2. Device Enrollment
 
 ```kotlin
-fun enrollDevice(
-    forceRenew: Boolean = false,
-    onSuccess: () -> Unit,
-    onError: (String) -> Unit
-)
+suspend fun enrollDevice(forceRenew: Boolean = false): Result<Unit>
 ```
 
 Registers the device with the Atheer backend and securely stores the issued `deviceSeed`. If the device is already enrolled and `forceRenew = false`, the call returns immediately without a network request.
 
 **Endpoint**: `POST /api/v1/devices/enroll`  
 **Body**: `{ "deviceId": "<phoneNumber>" }`
+
+```kotlin
+lifecycleScope.launch {
+    sdk.enrollDevice()
+        .onSuccess { /* proceed to payment UI */ }
+        .onFailure { error -> showError(error.message) }
+}
+```
 
 ---
 
@@ -378,7 +536,9 @@ data class AtheerReadinessReport(
     val isDeviceEnrolled: Boolean,     // deviceSeed has been received and stored
     val isDeviceRooted: Boolean        // RootBeer detection result
 ) {
-    val isReadyForPayment: Boolean     // true only when all requirements are satisfied
+    // true when ALL requirements are met: NFC on, HCE supported,
+    // biometric available, device enrolled, and device not rooted
+    val isReadyForPayment: Boolean
 }
 ```
 
@@ -387,11 +547,7 @@ data class AtheerReadinessReport(
 ### 4. Prepare Payment (Customer Side)
 
 ```kotlin
-fun preparePayment(
-    activity: FragmentActivity,
-    onSuccess: () -> Unit,
-    onError: (String) -> Unit
-)
+suspend fun preparePayment(activity: FragmentActivity): Result<Unit>
 ```
 
 Triggers the biometric prompt. On success:
@@ -402,6 +558,14 @@ Triggers the biometric prompt. On success:
 5. Updates `sessionState` to `SessionState.ARMED`.
 
 **Rate Limiting**: A minimum of **5 seconds** must elapse between consecutive payment attempts.
+
+```kotlin
+lifecycleScope.launch {
+    sdk.preparePayment(activity = this@PaymentActivity)
+        .onSuccess { showTapToPayUI() }
+        .onFailure { error -> showError(error.message) }
+}
+```
 
 ---
 

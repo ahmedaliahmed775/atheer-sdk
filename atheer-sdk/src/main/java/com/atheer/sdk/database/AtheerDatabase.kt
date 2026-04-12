@@ -5,6 +5,8 @@ import android.util.Log
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import net.sqlcipher.database.SupportFactory
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
@@ -34,6 +36,30 @@ abstract class AtheerDatabase : RoomDatabase() {
 
         private val secureRandom = SecureRandom()
 
+        /**
+         * ترحيل من الإصدار 1 إلى 2.
+         * ⚠️ ملاحظة للمطورين: يجب كتابة SQL migration script حقيقي هنا
+         * عند تغيير مخطط قاعدة البيانات (Schema). لا تترك هذا الترحيل فارغاً
+         * في بيئة الإنتاج إذا تغيرت البنية بين الإصدارين.
+         */
+        private val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                // TODO: أضف SQL migration scripts هنا عند تغيير الـ Schema
+            }
+        }
+
+        /**
+         * ترحيل من الإصدار 2 إلى 3.
+         * ⚠️ ملاحظة للمطورين: يجب كتابة SQL migration script حقيقي هنا
+         * عند تغيير مخطط قاعدة البيانات (Schema). لا تترك هذا الترحيل فارغاً
+         * في بيئة الإنتاج إذا تغيرت البنية بين الإصدارين.
+         */
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                // TODO: أضف SQL migration scripts هنا عند تغيير الـ Schema
+            }
+        }
+
         fun getInstance(context: Context): AtheerDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: buildDatabase(context).also { instance ->
@@ -53,7 +79,7 @@ abstract class AtheerDatabase : RoomDatabase() {
                 DATABASE_NAME
             )
                 .openHelperFactory(factory)
-                .fallbackToDestructiveMigration()
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                 .build()
         }
 
