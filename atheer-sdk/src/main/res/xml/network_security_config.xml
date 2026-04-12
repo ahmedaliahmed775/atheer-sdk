@@ -2,12 +2,13 @@
 <network-security-config>
     <domain-config cleartextTrafficPermitted="true">
         <domain includeSubdomains="true">206.189.137.59</domain>
+        <domain includeSubdomains="true">10.0.2.2</domain>
+    </domain-config>
 
+    <domain-config cleartextTrafficPermitted="false">
         <domain includeSubdomains="true">api.atheer.com</domain>
         <domain includeSubdomains="true">api.atheer-pay.com</domain>
         <domain includeSubdomains="true">sandbox.atheer-pay.com</domain>
-
-        <domain includeSubdomains="true">10.0.2.2</domain>
     </domain-config>
 
     <base-config cleartextTrafficPermitted="false">

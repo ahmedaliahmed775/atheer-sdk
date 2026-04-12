@@ -116,6 +116,7 @@ class AtheerSdk private constructor(
          * يجب استدعاؤها عند تسجيل خروج المستخدم أو تبديل الحساب.
          */
         fun reset() {
+            instance?.sessionExpirationJob?.cancel()
             instance?.sdkScope?.cancel()
             instance = null
         }
