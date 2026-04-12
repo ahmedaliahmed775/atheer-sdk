@@ -1,19 +1,14 @@
 package com.atheer.sdk
 
 import android.content.Context
-import android.content.pm.PackageManager
-import android.nfc.NfcAdapter
 import android.util.Log
-import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import com.atheer.sdk.database.AtheerDatabase
-import com.atheer.sdk.database.TransactionEntity
 import com.atheer.sdk.model.AtheerReadinessReport
 import com.atheer.sdk.model.ChargeRequest
 import com.atheer.sdk.model.ChargeResponse
-import com.atheer.sdk.model.EnrollResponse
 import com.atheer.sdk.network.AtheerNetworkRouter
 import com.atheer.sdk.security.AtheerKeystoreManager
 import com.atheer.sdk.security.AtheerPaymentSession
@@ -115,8 +110,6 @@ class AtheerSdk private constructor(
         private const val TAG = "AtheerSdk"
         private const val PRODUCTION_URL = "http://206.189.137.59:4000"
         private const val SANDBOX_URL = "http://10.0.2.2:4000"
-        private const val CHARGE_PATH = "/api/v1/payments/process"
-        private const val ENROLL_PATH = "/api/v1/devices/enroll"
         private const val MIN_PAYMENT_INTERVAL_MS = 5_000L   // 5 ثوانٍ بين كل محاولة دفع
         private const val NFC_PAYMENT_TIMESTAMP_MAX_AGE_MS = 120_000L // 2 دقيقة
 
@@ -172,6 +165,19 @@ class AtheerSdk private constructor(
     private val database = AtheerDatabase.getInstance(context)
     private val sdkScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+    /**
+     * مستودع البيانات المركزي — يوفر وصولاً نظيفاً للشبكة وقاعدة البيانات والـ Keystore.
+     */
+    val repository: com.atheer.sdk.repository.AtheerRepository =
+        com.atheer.sdk.repository.AtheerRepositoryImpl(
+            context = context,
+            networkRouter = networkRouter,
+            keystoreManager = keystoreManager,
+            database = database,
+            baseUrl = finalUrl,
+            gson = gson
+        )
+
     // Rate limiting
     private var lastPaymentAttemptMs = 0L
 
@@ -180,116 +186,103 @@ class AtheerSdk private constructor(
      * إذا كان الجهاز مسجلاً مسبقاً، يتم إرجاع النجاح فوراً دون طلب شبكة.
      *
      * @param forceRenew إعادة التسجيل حتى لو كان الجهاز مسجلاً (افتراضي: false)
+     * @return [Result.success] عند نجاح التسجيل، [Result.failure] مع رسالة الخطأ عند الفشل.
      */
-    fun enrollDevice(
-        forceRenew: Boolean = false,
-        onSuccess: () -> Unit,
-        onError: (String) -> Unit
-    ) {
-        sdkScope.launch {
-            // تجنب إعادة التسجيل غير الضرورية
-            if (!forceRenew && keystoreManager.isDeviceEnrolled()) {
-                Log.i(TAG, "الجهاز مسجل مسبقاً — تم تخطي طلب الشبكة.")
-                withContext(Dispatchers.Main) { onSuccess() }
-                return@launch
-            }
-
-            try {
-                val requestBody = gson.toJson(mapOf("deviceId" to phoneNumber))
-                val responseJson = networkRouter.executeStandard(
-                    "$finalUrl$ENROLL_PATH", requestBody, "", apiKey
-                )
-
-                val enrollResponse = gson.fromJson(responseJson, EnrollResponse::class.java)
-                val seed = enrollResponse.getSeed()
-
-                if (!seed.isNullOrBlank()) {
-                    keystoreManager.storeEnrolledSeed(seed)
-                    withContext(Dispatchers.Main) { onSuccess() }
-                } else {
-                    withContext(Dispatchers.Main) { onError("لم يتم العثور على deviceSeed في الرد") }
-                }
-            } catch (e: Exception) {
-                withContext(Dispatchers.Main) { onError(e.message ?: "فشل التسجيل") }
-            }
-        }
-    }
+    suspend fun enrollDevice(forceRenew: Boolean = false): Result<Unit> =
+        repository.enrollDevice(phoneNumber, apiKey, forceRenew)
 
     /**
      * تجهيز عملية الدفع عبر المصادقة الحيوية للعميل.
      * يتضمن Rate Limiting لمنع المحاولات المتكررة خلال فترة قصيرة.
+     *
+     * @param activity النشاط الحالي المطلوب لعرض مربع حوار المصادقة الحيوية.
+     * @return [Result.success] عند نجاح المصادقة وتسليح الجلسة، [Result.failure] عند الفشل.
      */
-    fun preparePayment(
-        activity: FragmentActivity,
-        onSuccess: () -> Unit,
-        onError: (String) -> Unit
-    ) {
-        // Rate Limiting
-        val now = System.currentTimeMillis()
-        if (now - lastPaymentAttemptMs < MIN_PAYMENT_INTERVAL_MS) {
-            val remaining = (MIN_PAYMENT_INTERVAL_MS - (now - lastPaymentAttemptMs)) / 1000
-            onError("يرجى الانتظار $remaining ثوانٍ قبل المحاولة مجدداً")
-            return
-        }
-        lastPaymentAttemptMs = now
+    suspend fun preparePayment(activity: FragmentActivity): Result<Unit> =
+        withContext(Dispatchers.Main) {
+            // Rate Limiting
+            val now = System.currentTimeMillis()
+            if (now - lastPaymentAttemptMs < MIN_PAYMENT_INTERVAL_MS) {
+                val remaining = (MIN_PAYMENT_INTERVAL_MS - (now - lastPaymentAttemptMs)) / 1000
+                return@withContext Result.failure(
+                    IllegalStateException("يرجى الانتظار $remaining ثوانٍ قبل المحاولة مجدداً")
+                )
+            }
+            lastPaymentAttemptMs = now
 
-        val executor = ContextCompat.getMainExecutor(activity)
-        val biometricPrompt = BiometricPrompt(activity, executor,
-            object : BiometricPrompt.AuthenticationCallback() {
-                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
-                    super.onAuthenticationSucceeded(result)
-                    try {
-                        val counter = keystoreManager.incrementAndGetCounter()
-                        val timestamp = System.currentTimeMillis()
-                        val luk = keystoreManager.deriveLUK(counter)
-                        val payload = "$phoneNumber|$counter|$timestamp"
-                        val cryptogram = keystoreManager.signWithLUK(payload, luk)
+            suspendCancellableCoroutine { continuation ->
+                val executor = ContextCompat.getMainExecutor(activity)
+                val biometricPrompt = BiometricPrompt(activity, executor,
+                    object : BiometricPrompt.AuthenticationCallback() {
+                        override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                            super.onAuthenticationSucceeded(result)
+                            try {
+                                val counter = keystoreManager.incrementAndGetCounter()
+                                val timestamp = System.currentTimeMillis()
+                                val luk = keystoreManager.deriveLUK(counter)
+                                val payload = "$phoneNumber|$counter|$timestamp"
+                                val cryptogram = keystoreManager.signWithLUK(payload, luk)
 
-                        AtheerPaymentSession.arm(payload, cryptogram)
+                                AtheerPaymentSession.arm(payload, cryptogram)
 
-                        // تحديث حالة الجلسة + بدء مؤقت الانتهاء
-                        _sessionState.value = SessionState.ARMED
-                        AtheerPaymentSession.onSessionConsumed = {
-                            _sessionState.value = SessionState.IDLE
-                            sessionExpirationJob?.cancel()
-                        }
-                        sessionExpirationJob?.cancel()
-                        sessionExpirationJob = sdkScope.launch {
-                            delay(AtheerPaymentSession.SESSION_TIMEOUT_MS)
-                            if (_sessionState.value == SessionState.ARMED) {
-                                _sessionState.value = SessionState.EXPIRED
+                                // تحديث حالة الجلسة + بدء مؤقت الانتهاء
+                                _sessionState.value = SessionState.ARMED
+                                AtheerPaymentSession.onSessionConsumed = {
+                                    _sessionState.value = SessionState.IDLE
+                                    sessionExpirationJob?.cancel()
+                                }
+                                sessionExpirationJob?.cancel()
+                                sessionExpirationJob = sdkScope.launch {
+                                    delay(AtheerPaymentSession.SESSION_TIMEOUT_MS)
+                                    if (_sessionState.value == SessionState.ARMED) {
+                                        _sessionState.value = SessionState.EXPIRED
+                                    }
+                                }
+
+                                if (continuation.isActive) continuation.resume(Result.success(Unit)) {}
+                            } catch (e: Exception) {
+                                _sessionState.value = SessionState.IDLE
+                                if (continuation.isActive) {
+                                    continuation.resume(Result.failure(e)) {}
+                                }
                             }
                         }
 
-                        onSuccess()
-                    } catch (e: Exception) {
-                        onError("خطأ أثناء إنشاء التوقيع: ${e.message}")
+                        override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                            super.onAuthenticationError(errorCode, errString)
+                            if (continuation.isActive) {
+                                continuation.resume(
+                                    Result.failure(Exception(errString.toString()))
+                                ) {}
+                            }
+                        }
+
+                        override fun onAuthenticationFailed() {
+                            super.onAuthenticationFailed()
+                            // onAuthenticationFailed يُستدعى لكل محاولة فاشلة — لا نُنهي الـ coroutine هنا
+                            // بل ننتظر onAuthenticationError أو onAuthenticationSucceeded
+                        }
+                    })
+
+                val promptInfo = BiometricPrompt.PromptInfo.Builder()
+                    .setTitle("مصادقة عملية الدفع")
+                    .setSubtitle("استخدم البصمة لتأكيد الدفع عبر أثير")
+                    .setNegativeButtonText("إلغاء")
+                    .build()
+
+                try {
+                    biometricPrompt.authenticate(promptInfo)
+                } catch (e: Exception) {
+                    if (continuation.isActive) {
+                        continuation.resume(Result.failure(e)) {}
                     }
                 }
 
-                override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
-                    super.onAuthenticationError(errorCode, errString)
-                    onError(errString.toString())
+                continuation.invokeOnCancellation {
+                    biometricPrompt.cancelAuthentication()
                 }
-
-                override fun onAuthenticationFailed() {
-                    super.onAuthenticationFailed()
-                    onError("فشلت المصادقة الحيوية")
-                }
-            })
-
-        val promptInfo = BiometricPrompt.PromptInfo.Builder()
-            .setTitle("مصادقة عملية الدفع")
-            .setSubtitle("استخدم البصمة لتأكيد الدفع عبر أثير")
-            .setNegativeButtonText("إلغاء")
-            .build()
-
-        try {
-            biometricPrompt.authenticate(promptInfo)
-        } catch (e: Exception) {
-            onError("خطأ في تهيئة المصادقة: ${e.message}")
+            }
         }
-    }
 
     /**
      * تحليل بيانات NFC وتجهيز عملية الدفع (يستخدمها التاجر).
@@ -338,90 +331,21 @@ class AtheerSdk private constructor(
     }
 
     /**
-     * دالة الدفع (Suspended).
+     * دالة الدفع (Suspended) — تُفوَّض للـ Repository.
      * تحفظ المعاملة تلقائياً في قاعدة البيانات المحلية عند نجاح العملية.
      */
     suspend fun charge(request: ChargeRequest, accessToken: String): Result<ChargeResponse> {
         if (!networkRouter.isNetworkAvailable()) {
             return Result.failure(Exception("خطأ: لا يوجد اتصال بالإنترنت."))
         }
-
-        return try {
-            val body = gson.toJson(request)
-            val responseJson = networkRouter.executeStandard(
-                "$finalUrl$CHARGE_PATH", body, accessToken, apiKey
-            )
-            val responseObj = gson.fromJson(responseJson, Map::class.java)
-            val transactionId = (responseObj["transactionId"]
-                ?: (responseObj["data"] as? Map<*, *>)?.get("transactionId") ?: "").toString()
-
-            val response = ChargeResponse(
-                transactionId = transactionId,
-                status = "ACCEPTED",
-                message = "نجاح العملية"
-            )
-
-            // حفظ المعاملة محلياً تلقائياً عند النجاح
-            sdkScope.launch {
-                runCatching {
-                    database.transactionDao().insertTransaction(request.toTransactionEntity(transactionId))
-                }.onFailure { e ->
-                    Log.w(TAG, "فشل حفظ المعاملة محلياً: ${e.message}")
-                }
-            }
-
-            Result.success(response)
-        } catch (e: Exception) {
-            Result.failure(e)
-        }
+        return repository.charge(request, accessToken, apiKey)
     }
 
     /**
-     * التحقق من جاهزية الجهاز الكاملة لاستخدام SDK.
+     * التحقق من جاهزية الجهاز الكاملة لاستخدام SDK — تُفوَّض للـ Repository.
      * استخدمها قبل عرض واجهة الدفع للمستخدم.
      *
      * @return [AtheerReadinessReport] يحتوي على حالة جميع المتطلبات.
      */
-    fun checkReadiness(): AtheerReadinessReport {
-        val nfcAdapter = NfcAdapter.getDefaultAdapter(context)
-        val isNfcSupported = nfcAdapter != null
-        val isNfcEnabled = nfcAdapter?.isEnabled == true
-        val isHceSupported = context.packageManager
-            .hasSystemFeature(PackageManager.FEATURE_NFC_HOST_CARD_EMULATION)
-        val biometricManager = BiometricManager.from(context)
-        val isBiometricAvailable = biometricManager.canAuthenticate(
-            BiometricManager.Authenticators.BIOMETRIC_STRONG
-        ) == BiometricManager.BIOMETRIC_SUCCESS
-        val isDeviceRooted = try {
-            RootBeer(context).isRooted
-        } catch (e: Exception) {
-            false
-        }
-
-        return AtheerReadinessReport(
-            isNfcSupported = isNfcSupported,
-            isNfcEnabled = isNfcEnabled,
-            isHceSupported = isHceSupported,
-            isBiometricAvailable = isBiometricAvailable,
-            isDeviceEnrolled = keystoreManager.isDeviceEnrolled(),
-            isDeviceRooted = isDeviceRooted
-        )
-    }
+    fun checkReadiness(): AtheerReadinessReport = repository.checkReadiness()
 }
-
-/**
- * تحويل [ChargeRequest] إلى [TransactionEntity] للحفظ في قاعدة البيانات.
- */
-private fun ChargeRequest.toTransactionEntity(transactionId: String) = TransactionEntity(
-    transactionId = transactionId,
-    amount = amount,
-    currency = currency,
-    receiverAccount = receiverAccount,
-    transactionType = transactionType,
-    timestamp = timestamp,
-    deviceId = deviceId,
-    counter = counter,
-    authMethod = authMethod,
-    signature = signature,
-    isSynced = true // تم إرسالها للخادم بنجاح
-)
