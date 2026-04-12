@@ -236,11 +236,11 @@ class AtheerSdk private constructor(
                                     }
                                 }
 
-                                if (continuation.isActive) continuation.resume(Result.success(Unit))
+                                if (continuation.isActive) continuation.resumeWith(kotlin.Result.success(Result.success(Unit)))
                             } catch (e: Exception) {
                                 _sessionState.value = SessionState.IDLE
                                 if (continuation.isActive) {
-                                    continuation.resume(Result.failure(e))
+                                    continuation.resumeWith(kotlin.Result.success(Result.failure(e)))
                                 }
                             }
                         }
@@ -248,8 +248,8 @@ class AtheerSdk private constructor(
                         override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
                             super.onAuthenticationError(errorCode, errString)
                             if (continuation.isActive) {
-                                continuation.resume(
-                                    Result.failure(Exception(errString.toString()))
+                                continuation.resumeWith(
+                                    kotlin.Result.success(Result.failure(Exception(errString.toString())))
                                 )
                             }
                         }
@@ -271,7 +271,7 @@ class AtheerSdk private constructor(
                     biometricPrompt.authenticate(promptInfo)
                 } catch (e: Exception) {
                     if (continuation.isActive) {
-                        continuation.resume(Result.failure(e))
+                        continuation.resumeWith(kotlin.Result.success(Result.failure(e)))
                     }
                 }
 
